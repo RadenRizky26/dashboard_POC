@@ -46,7 +46,6 @@ interface AlarmLog {
   type: "WARNING" | "INFO" | "CRITICAL";
   message: string;
 }
-// Tipe baru untuk menyimpan riwayat batch
 interface BatchHistory {
   id: string;
   data: ProcessData[];
@@ -68,9 +67,7 @@ export default function UltimateDashboard() {
   const [targetRpm, setTargetRpm] = useState<number>(10);
 
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
-  // State baru untuk menyimpan kumpulan batch yang sudah lewat
   const [pastBatches, setPastBatches] = useState<BatchHistory[]>([]);
-  // State untuk melacak batch mana yang sedang dilihat di tabel
   const [viewingBatchId, setViewingBatchId] = useState<string>("current");
 
   const [alarms, setAlarms] = useState<AlarmLog[]>([
@@ -114,19 +111,18 @@ export default function UltimateDashboard() {
   };
 
   const startNewBatch = () => {
-    // 1. Simpan data batch saat ini ke dalam pastBatches sebelum dihapus
     if (trendData.length > 0) {
       setPastBatches((prev) => [
         { id: batchId, data: [...trendData] },
         ...prev,
       ]);
     }
-
-    // 2. Buat ID baru dan bersihkan data grafik untuk batch baru
     const newId = `PRD-${Math.floor(Math.random() * 10000)}`;
     setBatchId(newId);
+
+    // Kosongkan data grafik dengan aman
     setTrendData([]);
-    setViewingBatchId("current"); // Kembalikan view tabel ke batch yang baru berjalan
+    setViewingBatchId("current");
 
     setAlarms((prev) =>
       [
@@ -141,7 +137,6 @@ export default function UltimateDashboard() {
     );
   };
 
-  // Logika export CSV disesuaikan dengan batch yang sedang dilihat
   const exportToCSV = () => {
     const dataToExport =
       viewingBatchId === "current"
@@ -169,32 +164,33 @@ export default function UltimateDashboard() {
     a.click();
   };
 
+  // ==========================================
+  // PERBAIKAN LOGIKA SIMULASI & GRAFIK DI SINI
+  // ==========================================
   useEffect(() => {
-    if (systemStatus === "STOPPED" || isEStop) {
-      if (metrics.rpm !== 0) {
-        setMetrics((prev) => ({ ...prev, rpm: 0 }));
-        const now = new Date().toLocaleTimeString("id-ID", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        });
-        setTrendData((prev) => [
-          ...prev.slice(1),
-          {
-            time: now.slice(0, 5),
-            temperature: metrics.temp,
-            ph: metrics.ph,
-            rpm: 0,
-          },
-        ]);
-      }
-      return;
-    }
-
     const interval = setInterval(() => {
       const newTemp = +(metrics.temp + (Math.random() - 0.4)).toFixed(2);
       const newPh = +(6.5 + Math.random() * 0.5).toFixed(2);
 
+      let newRpm = metrics.rpm;
+
+      // Jika mesin menyala, RPM naik perlahan ke target. Jika mati, langsung 0.
+      if (systemStatus === "RUNNING" && !isEStop) {
+        const rpmStep = 15;
+        if (newRpm < targetRpm) newRpm = Math.min(newRpm + rpmStep, targetRpm);
+        else if (newRpm > targetRpm)
+          newRpm = Math.max(newRpm - rpmStep, targetRpm);
+      } else {
+        newRpm = 0;
+      }
+
+      const now = new Date().toLocaleTimeString("id-ID", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+      // Cek Interlock K3
       if (newTemp >= 40 && !isEStop) {
         setIsEStop(true);
         setSystemStatus("STOPPED");
@@ -202,7 +198,7 @@ export default function UltimateDashboard() {
           [
             {
               id: Date.now().toString(),
-              time: new Date().toLocaleTimeString("id-ID"),
+              time: now,
               type: "CRITICAL",
               message:
                 "INTERLOCK: Suhu Kritis (>40°C). Mesin dimatikan otomatis!",
@@ -210,33 +206,8 @@ export default function UltimateDashboard() {
             ...prev,
           ].slice(0, 50),
         );
-        return;
-      }
-
-      let newRpm = metrics.rpm;
-      const rpmStep = 15;
-      if (newRpm < targetRpm) newRpm = Math.min(newRpm + rpmStep, targetRpm);
-      else if (newRpm > targetRpm)
-        newRpm = Math.max(newRpm - rpmStep, targetRpm);
-
-      setMetrics((prev) => ({
-        ...prev,
-        temp: newTemp,
-        ph: newPh,
-        rpm: newRpm,
-      }));
-
-      const now = new Date().toLocaleTimeString("id-ID", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
-      setTrendData((prev) => [
-        ...prev.slice(1),
-        { time: now.slice(0, 5), temperature: newTemp, ph: newPh, rpm: newRpm },
-      ]);
-
-      if (
+        newRpm = 0;
+      } else if (
         newTemp > 36 &&
         newTemp < 40 &&
         alarms.length > 0 &&
@@ -255,6 +226,22 @@ export default function UltimateDashboard() {
           ].slice(0, 50),
         );
       }
+
+      setMetrics({ temp: newTemp, ph: newPh, rpm: newRpm });
+
+      // Update Grafik: Biarkan tumbuh sampai 15 data, baru potong depannya
+      setTrendData((prevTrend) => {
+        const nextData = [
+          ...prevTrend,
+          {
+            time: now.slice(0, 5),
+            temperature: newTemp,
+            ph: newPh,
+            rpm: newRpm,
+          },
+        ];
+        return nextData.length > 15 ? nextData.slice(1) : nextData;
+      });
     }, 3000);
     return () => clearInterval(interval);
   }, [systemStatus, metrics, alarms, targetRpm, isEStop]);
@@ -271,7 +258,6 @@ export default function UltimateDashboard() {
     tooltipText: isDarkMode ? "#fff" : "#0f172a",
   };
 
-  // Tentukan data mana yang akan ditampilkan di tabel berdasarkan dropdown
   const displayTableData =
     viewingBatchId === "current"
       ? trendData
@@ -374,7 +360,6 @@ export default function UltimateDashboard() {
             </button>
           </div>
 
-          {/* TAB 1: CONTROL PANEL */}
           {activeTab === "control" && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="flex flex-wrap items-center gap-4 bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors">
@@ -621,10 +606,8 @@ export default function UltimateDashboard() {
             </div>
           )}
 
-          {/* TAB 2: DATA & LOGS */}
           {activeTab === "logs" && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {/* Tabel Data Historis dengan Dropdown Batch */}
               <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors duration-500 flex flex-col h-[600px]">
                 <div className="flex justify-between items-center mb-6">
                   <div>
@@ -634,7 +617,6 @@ export default function UltimateDashboard() {
                     </h3>
                   </div>
                   <div className="flex gap-2 items-center">
-                    {/* Dropdown Pemilih Batch */}
                     <select
                       value={viewingBatchId}
                       onChange={(e) => setViewingBatchId(e.target.value)}
@@ -665,7 +647,7 @@ export default function UltimateDashboard() {
 
                 <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl">
                   <table className="w-full text-left border-collapse">
-                    <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md">
+                    <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
                       <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">
                         <th className="p-4 font-semibold">Waktu</th>
                         <th className="p-4 font-semibold">Suhu (°C)</th>
@@ -674,7 +656,6 @@ export default function UltimateDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {/* Mapping dari array yang dipilih */}
                       {[...displayTableData].reverse().map((row, i) => (
                         <tr
                           key={i}
@@ -690,13 +671,12 @@ export default function UltimateDashboard() {
                   </table>
                   {displayTableData.length === 0 && (
                     <div className="p-8 text-center text-slate-500">
-                      Belum ada data di batch ini.
+                      Menunggu data sensor masuk...
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* System Logs */}
               <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[600px] transition-colors duration-500">
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2">
                   <ShieldAlert
