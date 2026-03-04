@@ -19,12 +19,18 @@ import {
   Clock,
   Zap,
   Thermometer,
-  Droplets,
   Gauge,
   ShieldAlert,
   Settings2,
   Sun,
   Moon,
+  Wifi,
+  FlaskConical,
+  Download,
+  AlertOctagon,
+  SlidersHorizontal,
+  ClipboardList,
+  TableProperties,
 } from "lucide-react";
 
 // --- Types ---
@@ -37,33 +43,39 @@ interface ProcessData {
 interface AlarmLog {
   id: string;
   time: string;
-  type: "WARNING" | "INFO";
+  type: "WARNING" | "INFO" | "CRITICAL";
   message: string;
 }
 
 export default function UltimateDashboard() {
   const [isClient, setIsClient] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(true); // State untuk Theme
+  const [isDarkMode, setIsDarkMode] = useState(true);
+
+  // State Navigasi Tab
+  const [activeTab, setActiveTab] = useState<"control" | "logs">("control");
+
+  // State Engine & K3
   const [systemStatus, setSystemStatus] = useState<"RUNNING" | "STOPPED">(
     "STOPPED",
   );
+  const [isEStop, setIsEStop] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+
+  // State Produksi (MES)
+  const [batchId, setBatchId] = useState<string>("PRD-2602-01");
   const [targetRpm, setTargetRpm] = useState<number>(120);
+
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
   const [alarms, setAlarms] = useState<AlarmLog[]>([
     {
       id: "1",
-      time: "09:45:22",
+      time: new Date().toLocaleTimeString("id-ID"),
       type: "INFO",
-      message: "Koneksi sistem antarmuka stabil.",
+      message: "Sistem HMI siap. Material diset ke Kulit Buah Kopi.",
     },
   ]);
 
-  const [metrics, setMetrics] = useState({
-    temp: 32.5,
-    ph: 6.8,
-    level: 85,
-    rpm: 0,
-  });
+  const [metrics, setMetrics] = useState({ temp: 32.5, ph: 6.8, rpm: 0 });
 
   useEffect(() => {
     setIsClient(true);
@@ -76,8 +88,59 @@ export default function UltimateDashboard() {
     setTrendData(initial);
   }, []);
 
+  const toggleEStop = () => {
+    setIsEStop(!isEStop);
+    setSystemStatus("STOPPED");
+    if (!isEStop) {
+      setAlarms((prev) =>
+        [
+          {
+            id: Date.now().toString(),
+            time: new Date().toLocaleTimeString("id-ID"),
+            type: "CRITICAL",
+            message: "EMERGENCY STOP DITEKAN MANUAL!",
+          },
+          ...prev,
+        ].slice(0, 50),
+      );
+    }
+  };
+
+  const startNewBatch = () => {
+    const newId = `PRD-${Math.floor(Math.random() * 10000)}`;
+    setBatchId(newId);
+    setTrendData([]);
+    setAlarms((prev) =>
+      [
+        {
+          id: Date.now().toString(),
+          time: new Date().toLocaleTimeString("id-ID"),
+          type: "INFO",
+          message: `Batch baru dimulai: ${newId}`,
+        },
+        ...prev,
+      ].slice(0, 50),
+    );
+  };
+
+  const exportToCSV = () => {
+    const headers = "Waktu,Suhu(C),pH,RPM Aktual\n";
+    const csvData = trendData
+      .map(
+        (row) =>
+          `${row.time},${row.temperature.toFixed(2)},${row.ph.toFixed(2)},${row.rpm}`,
+      )
+      .join("\n");
+    const blob = new Blob([headers + csvData], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Laporan_POC_${batchId}.csv`;
+    a.click();
+  };
+
   useEffect(() => {
-    if (systemStatus === "STOPPED") {
+    if (systemStatus === "STOPPED" || isEStop) {
       if (metrics.rpm !== 0) {
         setMetrics((prev) => ({ ...prev, rpm: 0 }));
         const now = new Date().toLocaleTimeString("id-ID", {
@@ -99,15 +162,38 @@ export default function UltimateDashboard() {
     }
 
     const interval = setInterval(() => {
-      const newTemp = +(metrics.temp + (Math.random() - 0.5)).toFixed(2);
+      const newTemp = +(metrics.temp + (Math.random() - 0.4)).toFixed(2);
       const newPh = +(6.5 + Math.random() * 0.5).toFixed(2);
-      const currentRpm = targetRpm;
+
+      if (newTemp >= 40 && !isEStop) {
+        setIsEStop(true);
+        setSystemStatus("STOPPED");
+        setAlarms((prev) =>
+          [
+            {
+              id: Date.now().toString(),
+              time: new Date().toLocaleTimeString("id-ID"),
+              type: "CRITICAL",
+              message:
+                "INTERLOCK: Suhu Kritis (>40°C). Mesin dimatikan otomatis!",
+            },
+            ...prev,
+          ].slice(0, 50),
+        );
+        return;
+      }
+
+      let newRpm = metrics.rpm;
+      const rpmStep = 15;
+      if (newRpm < targetRpm) newRpm = Math.min(newRpm + rpmStep, targetRpm);
+      else if (newRpm > targetRpm)
+        newRpm = Math.max(newRpm - rpmStep, targetRpm);
 
       setMetrics((prev) => ({
         ...prev,
         temp: newTemp,
         ph: newPh,
-        rpm: currentRpm,
+        rpm: newRpm,
       }));
 
       const now = new Date().toLocaleTimeString("id-ID", {
@@ -117,32 +203,34 @@ export default function UltimateDashboard() {
       });
       setTrendData((prev) => [
         ...prev.slice(1),
-        {
-          time: now.slice(0, 5),
-          temperature: newTemp,
-          ph: newPh,
-          rpm: currentRpm,
-        },
+        { time: now.slice(0, 5), temperature: newTemp, ph: newPh, rpm: newRpm },
       ]);
 
-      if (newTemp > 36 && alarms.length < 5) {
-        setAlarms((prev) => [
-          {
-            id: Date.now().toString(),
-            time: now,
-            type: "WARNING",
-            message: "K3 Alert: Suhu melampaui batas optimal (36°C)",
-          },
-          ...prev.slice(0, 4),
-        ]);
+      if (
+        newTemp > 36 &&
+        newTemp < 40 &&
+        alarms.length > 0 &&
+        alarms[0].message.indexOf("optimal") === -1
+      ) {
+        setAlarms((prev) =>
+          [
+            {
+              id: Date.now().toString(),
+              time: now,
+              type: "WARNING",
+              message:
+                "Suhu melampaui batas optimal (36°C). Periksa pendingin.",
+            },
+            ...prev,
+          ].slice(0, 50),
+        );
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [systemStatus, metrics, alarms.length, targetRpm]);
+  }, [systemStatus, metrics, alarms, targetRpm, isEStop]);
 
   if (!isClient) return null;
 
-  // Warna dinamis untuk Recharts menyesuaikan tema
   const chartColors = {
     grid: isDarkMode ? "#334155" : "#e2e8f0",
     axis: isDarkMode ? "#94a3b8" : "#64748b",
@@ -154,11 +242,10 @@ export default function UltimateDashboard() {
   };
 
   return (
-    // Wrapper utama untuk mendeteksi class "dark"
     <div className={isDarkMode ? "dark" : ""}>
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0a0f1c] dark:bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] dark:from-slate-900 dark:via-[#0a0f1c] dark:to-[#050810] text-slate-800 dark:text-slate-200 font-sans transition-colors duration-500 selection:bg-emerald-500/30">
+      <div className="min-h-screen bg-slate-50 dark:bg-[#0a0f1c] dark:bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] dark:from-slate-900 dark:via-[#0a0f1c] dark:to-[#050810] text-slate-800 dark:text-slate-200 font-sans transition-colors duration-500 selection:bg-emerald-500/30 pb-10">
         {/* Top Navigation */}
-        <nav className="sticky top-0 z-50 bg-white/70 dark:bg-slate-950/50 backdrop-blur-xl border-b border-slate-200 dark:border-white/5 px-8 py-4 flex justify-between items-center shadow-sm dark:shadow-2xl dark:shadow-black/50 transition-colors duration-500">
+        <nav className="sticky top-0 z-50 bg-white/70 dark:bg-slate-950/50 backdrop-blur-xl border-b border-slate-200 dark:border-white/5 px-8 py-4 flex justify-between items-center shadow-sm shadow-slate-200/40 dark:shadow-none transition-colors duration-500">
           <div className="flex items-center gap-4">
             <div className="bg-gradient-to-br from-emerald-400 to-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-500/20 ring-1 ring-emerald-500/20 dark:ring-white/20">
               <Activity size={24} className="text-white" />
@@ -176,6 +263,13 @@ export default function UltimateDashboard() {
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-4 text-slate-500 dark:text-slate-400 font-medium text-xs tracking-wider mr-4">
               <span className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/50 px-3 py-1.5 rounded-full ring-1 ring-slate-200 dark:ring-white/5 transition-colors">
+                <Wifi
+                  size={14}
+                  className={isOnline ? "text-emerald-500" : "text-rose-500"}
+                />
+                {isOnline ? "Sensor Online" : "Sensor Offline"}
+              </span>
+              <span className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/50 px-3 py-1.5 rounded-full ring-1 ring-slate-200 dark:ring-white/5 transition-colors">
                 <Database
                   size={14}
                   className="text-blue-500 dark:text-blue-400"
@@ -191,7 +285,6 @@ export default function UltimateDashboard() {
               </span>
             </div>
 
-            {/* Toggle Tema (Light / Dark) */}
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
               className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 hover:text-emerald-500 dark:hover:text-emerald-400 ring-1 ring-slate-200 dark:ring-white/5 transition-all active:scale-95"
@@ -201,9 +294,9 @@ export default function UltimateDashboard() {
           </div>
         </nav>
 
-        <main className="p-8 max-w-[1600px] mx-auto space-y-8">
-          {/* Header & Main Control */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+        <main className="p-8 max-w-[1600px] mx-auto">
+          {/* Header & Global Actions */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 border-b border-slate-200 dark:border-white/10 pb-6">
             <div>
               <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 transition-colors">
                 System <span className="text-emerald-500">Overview</span>
@@ -213,313 +306,421 @@ export default function UltimateDashboard() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-4">
-              {/* Control Target RPM */}
-              <div className="flex items-center gap-4 bg-white dark:bg-slate-800/30 p-2 pl-4 pr-5 rounded-2xl ring-1 ring-purple-500/20 shadow-sm dark:shadow-none backdrop-blur-md transition-colors">
-                <div className="bg-purple-100 dark:bg-purple-500/10 p-2 rounded-xl">
-                  <Settings2
-                    size={20}
-                    className="text-purple-600 dark:text-purple-400"
-                  />
-                </div>
-                <div className="flex flex-col justify-center">
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-1">
-                    Set Target RPM
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0"
-                      max="200"
-                      step="10"
-                      value={targetRpm}
-                      onChange={(e) => setTargetRpm(Number(e.target.value))}
-                      className="w-24 accent-purple-500 cursor-pointer"
-                    />
-                    <span className="text-sm font-bold text-purple-600 dark:text-purple-400 font-mono w-8">
-                      {targetRpm}
-                    </span>
-                  </div>
-                </div>
+            <div className="flex items-center gap-4">
+              <div className="bg-slate-100 dark:bg-slate-800/50 px-4 py-2.5 rounded-xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors flex flex-col justify-center">
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold block mb-0.5">
+                  Active Batch ID
+                </span>
+                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                  {batchId}
+                </span>
               </div>
-
-              {/* Engine State Control */}
-              <div className="flex items-center gap-4 bg-white dark:bg-slate-800/30 p-2 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 shadow-sm dark:shadow-none backdrop-blur-md transition-colors">
-                <div className="pl-4 pr-2 flex flex-col justify-center">
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500 font-bold">
-                    Engine State
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex h-3 w-3">
-                      {systemStatus === "RUNNING" && (
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      )}
-                      <span
-                        className={`relative inline-flex rounded-full h-3 w-3 ${systemStatus === "RUNNING" ? "bg-emerald-500" : "bg-rose-500"}`}
-                      ></span>
-                    </span>
-                    <span
-                      className={`text-sm font-bold ${systemStatus === "RUNNING" ? "text-emerald-500 dark:text-emerald-400" : "text-rose-500 dark:text-rose-400"}`}
-                    >
-                      {systemStatus}
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() =>
-                    setSystemStatus(
-                      systemStatus === "RUNNING" ? "STOPPED" : "RUNNING",
-                    )
-                  }
-                  className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all duration-300 active:scale-95 ${
-                    systemStatus === "RUNNING"
-                      ? "bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-500 hover:bg-rose-500 hover:text-white ring-1 ring-rose-500/30 dark:ring-rose-500/50 hover:shadow-[0_0_30px_rgba(244,63,94,0.4)]"
-                      : "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 hover:bg-emerald-500 hover:text-white ring-1 ring-emerald-500/30 dark:ring-emerald-500/50 hover:shadow-[0_0_30px_rgba(16,185,129,0.4)]"
-                  }`}
-                >
-                  <Zap size={18} />
-                  {systemStatus === "RUNNING" ? "SHUTDOWN" : "START MIXER"}
-                </button>
-              </div>
+              <button
+                onClick={toggleEStop}
+                className={`p-3 px-8 rounded-xl font-black tracking-widest flex items-center gap-2 transition-all active:scale-95 ${isEStop ? "bg-rose-600 text-white shadow-[0_0_20px_rgba(225,29,72,0.4)] animate-pulse" : "bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-500 ring-1 ring-rose-500/50 hover:bg-rose-600 hover:text-white"}`}
+              >
+                <AlertOctagon size={20} />
+                {isEStop ? "RESET E-STOP" : "E-STOP"}
+              </button>
             </div>
           </div>
 
-          {/* KPI Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <GradientCard
-              title="Suhu Tangki (PV)"
-              value={metrics.temp.toFixed(1)}
-              unit="°C"
-              icon={<Thermometer size={24} />}
-              color="from-orange-400 to-orange-600 dark:from-orange-500 dark:to-red-600"
-              alert={metrics.temp > 35}
-              isDark={isDarkMode}
-            />
-            <GradientCard
-              title="Level pH (PV)"
-              value={metrics.ph.toFixed(2)}
-              unit="pH"
-              icon={<Activity size={24} />}
-              color="from-blue-400 to-blue-600 dark:from-blue-500 dark:to-cyan-600"
-              isDark={isDarkMode}
-            />
-            <GradientCard
-              title="Volume Cairan"
-              value={metrics.level}
-              unit="%"
-              icon={<Droplets size={24} />}
-              color="from-teal-400 to-teal-600 dark:from-teal-400 dark:to-emerald-600"
-              isDark={isDarkMode}
-            />
-            <GradientCard
-              title="Kecepatan Motor (SV)"
-              value={metrics.rpm}
-              unit="RPM"
-              icon={<Gauge size={24} />}
-              color="from-purple-500 to-purple-700 dark:from-indigo-500 dark:to-purple-600"
-              isDark={isDarkMode}
-            />
+          {/* TAB NAVIGATION */}
+          <div className="flex gap-2 mb-8 border-b border-slate-200 dark:border-slate-800">
+            <button
+              onClick={() => setActiveTab("control")}
+              className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "control" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"}`}
+            >
+              <SlidersHorizontal size={18} /> Control Panel
+            </button>
+            <button
+              onClick={() => setActiveTab("logs")}
+              className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "logs" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"}`}
+            >
+              <ClipboardList size={18} /> Data & Logs
+            </button>
           </div>
 
-          {/* Bawah: Grafik & Logs */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Composed Chart Section */}
-            <div className="lg:col-span-2 bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-xl shadow-slate-200/50 dark:shadow-2xl dark:shadow-black/50 relative overflow-hidden transition-colors duration-500">
-              <div className="absolute -top-24 -right-24 w-64 h-64 bg-emerald-500/5 dark:bg-emerald-500/10 blur-[100px] rounded-full pointer-events-none"></div>
-
-              <div className="flex justify-between items-center mb-8 relative z-10">
-                <div>
-                  <h3 className="text-xl font-bold text-slate-800 dark:text-white transition-colors">
-                    Fermentation Analytics
-                  </h3>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 transition-colors">
-                    Real-time data tren Suhu, pH, dan RPM Motor
-                  </p>
+          {/* ==================================================== */}
+          {/* TAB 1: CONTROL PANEL */}
+          {/* ==================================================== */}
+          {activeTab === "control" && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Control Panel Actions - Bayangan diperhalus dan Dropdown diganti */}
+              <div className="flex flex-wrap items-center gap-4 bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors">
+                {/* Informasi Material Statis */}
+                <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors flex-1 md:flex-none">
+                  <FlaskConical size={20} className="text-amber-500" />
+                  <div className="flex flex-col justify-center">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-1">
+                      Material Baku
+                    </span>
+                    <span className="text-sm font-bold text-slate-700 dark:text-white">
+                      Kulit Buah Kopi
+                    </span>
+                  </div>
                 </div>
-                <div className="bg-slate-100 dark:bg-slate-800/50 px-4 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors">
-                  <span className="text-xs text-slate-400 uppercase tracking-widest font-semibold block mb-1">
-                    MES Batch ID
-                  </span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                    PRD-2602-01
-                  </span>
-                </div>
-              </div>
 
-              <div className="h-[320px] w-full relative z-10">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={trendData}>
-                    <defs>
-                      <linearGradient
-                        id="colorTemp"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="5%"
-                          stopColor="#f97316"
-                          stopOpacity={0.3}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="#f97316"
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                      <linearGradient id="colorPh" x1="0" y1="0" x2="0" y2="1">
-                        <stop
-                          offset="5%"
-                          stopColor="#0ea5e9"
-                          stopOpacity={0.3}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="#0ea5e9"
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                    </defs>
-
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke={chartColors.grid}
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="time"
-                      stroke={chartColors.axis}
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                      dy={10}
-                    />
-
-                    <YAxis
-                      yAxisId="left"
-                      stroke={chartColors.axis}
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                      dx={-10}
-                      domain={[25, 45]}
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      stroke="#a855f7"
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                      dx={10}
-                      domain={[0, 220]}
-                    />
-
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: chartColors.tooltipBg,
-                        backdropFilter: "blur(10px)",
-                        border: `1px solid ${chartColors.tooltipBorder}`,
-                        borderRadius: "16px",
-                        color: chartColors.tooltipText,
-                        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-                      }}
-                    />
-
-                    <ReferenceLine
-                      yAxisId="right"
-                      y={targetRpm}
-                      stroke="#a855f7"
-                      strokeDasharray="5 5"
-                      label={{
-                        position: "insideTopLeft",
-                        value: `TARGET: ${targetRpm}`,
-                        fill: "#a855f7",
-                        fontSize: 10,
-                        fontWeight: "bold",
-                      }}
-                    />
-
-                    <Area
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="temperature"
-                      name="Suhu (°C)"
-                      stroke="#f97316"
-                      strokeWidth={3}
-                      fill="url(#colorTemp)"
-                    />
-                    <Area
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="ph"
-                      name="pH"
-                      stroke="#0ea5e9"
-                      strokeWidth={3}
-                      fill="url(#colorPh)"
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="stepAfter"
-                      dataKey="rpm"
-                      name="RPM Aktual"
-                      stroke="#a855f7"
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Alarm & Log Section */}
-            <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-xl shadow-slate-200/50 dark:shadow-2xl dark:shadow-slate-900/50 flex flex-col transition-colors duration-500">
-              <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2 transition-colors">
-                <ShieldAlert size={20} className="text-rose-500" /> System Logs
-              </h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 transition-colors">
-                Pencatatan event & peringatan K3
-              </p>
-
-              <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                {alarms.map((alarm) => (
-                  <div
-                    key={alarm.id}
-                    className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl ring-1 ring-slate-100 dark:ring-white/5 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex items-center gap-2">
-                        {alarm.type === "WARNING" ? (
-                          <AlertTriangle
-                            size={16}
-                            className="text-rose-500 dark:text-rose-400"
-                          />
-                        ) : (
-                          <CheckCircle2
-                            size={16}
-                            className="text-emerald-500 dark:text-emerald-400"
-                          />
-                        )}
-                        <span
-                          className={`text-xs font-bold tracking-wider ${alarm.type === "WARNING" ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}
-                        >
-                          {alarm.type}
-                        </span>
-                      </div>
-                      <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
-                        {alarm.time}
+                <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors flex-1 md:flex-none">
+                  <Settings2 size={20} className="text-purple-500" />
+                  <div className="flex flex-col justify-center">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-1">
+                      Set Target RPM
+                    </span>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min="0"
+                        max="250"
+                        step="10"
+                        value={targetRpm}
+                        disabled={systemStatus === "RUNNING"}
+                        onChange={(e) => setTargetRpm(Number(e.target.value))}
+                        className="w-24 accent-purple-500 cursor-pointer disabled:opacity-50"
+                      />
+                      <span className="text-sm font-bold text-purple-600 dark:text-purple-400 font-mono w-8">
+                        {targetRpm}
                       </span>
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                      {alarm.message}
-                    </p>
                   </div>
-                ))}
+                </div>
+
+                <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors ml-auto">
+                  <div className="pl-4 pr-2 flex flex-col justify-center">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500 font-bold">
+                      Engine State
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-3 w-3">
+                        {systemStatus === "RUNNING" && (
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        )}
+                        <span
+                          className={`relative inline-flex rounded-full h-3 w-3 ${systemStatus === "RUNNING" ? "bg-emerald-500" : isEStop ? "bg-rose-500" : "bg-slate-400 dark:bg-slate-600"}`}
+                        ></span>
+                      </span>
+                      <span
+                        className={`text-sm font-bold ${systemStatus === "RUNNING" ? "text-emerald-600 dark:text-emerald-400" : isEStop ? "text-rose-600 dark:text-rose-400" : "text-slate-500"}`}
+                      >
+                        {isEStop ? "LOCKED" : systemStatus}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      setSystemStatus(
+                        systemStatus === "RUNNING" ? "STOPPED" : "RUNNING",
+                      )
+                    }
+                    disabled={isEStop}
+                    className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                      systemStatus === "RUNNING"
+                        ? "bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white"
+                        : "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-600 hover:text-white"
+                    }`}
+                  >
+                    <Zap size={18} />{" "}
+                    {systemStatus === "RUNNING" ? "SHUTDOWN" : "START MIXER"}
+                  </button>
+                </div>
+              </div>
+
+              {/* KPI Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <GradientCard
+                  title="Suhu Tangki (PV)"
+                  value={metrics.temp.toFixed(1)}
+                  unit="°C"
+                  icon={<Thermometer size={24} />}
+                  color="from-orange-400 to-orange-600 dark:from-orange-500 dark:to-red-600"
+                  alert={metrics.temp > 35}
+                  isDark={isDarkMode}
+                />
+                <GradientCard
+                  title="Level pH (PV)"
+                  value={metrics.ph.toFixed(2)}
+                  unit="pH"
+                  icon={<Activity size={24} />}
+                  color="from-blue-400 to-blue-600 dark:from-blue-500 dark:to-cyan-600"
+                  isDark={isDarkMode}
+                />
+                <GradientCard
+                  title="Kecepatan Motor (SV)"
+                  value={metrics.rpm}
+                  unit="RPM"
+                  icon={<Gauge size={24} />}
+                  color="from-purple-500 to-purple-700 dark:from-indigo-500 dark:to-purple-600"
+                  isDark={isDarkMode}
+                />
+              </div>
+
+              {/* Grafik */}
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors duration-500">
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
+                  Fermentation Analytics
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">
+                  Real-time data tren Suhu, pH, dan RPM Motor
+                </p>
+
+                <div className="h-[350px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={trendData}>
+                      <defs>
+                        <linearGradient
+                          id="colorTemp"
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="5%"
+                            stopColor="#f97316"
+                            stopOpacity={0.3}
+                          />
+                          <stop
+                            offset="95%"
+                            stopColor="#f97316"
+                            stopOpacity={0}
+                          />
+                        </linearGradient>
+                        <linearGradient
+                          id="colorPh"
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="5%"
+                            stopColor="#0ea5e9"
+                            stopOpacity={0.3}
+                          />
+                          <stop
+                            offset="95%"
+                            stopColor="#0ea5e9"
+                            stopOpacity={0}
+                          />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke={chartColors.grid}
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="time"
+                        stroke={chartColors.axis}
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        dy={10}
+                      />
+                      <YAxis
+                        yAxisId="left"
+                        stroke={chartColors.axis}
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        dx={-10}
+                        domain={[25, 45]}
+                      />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        stroke="#a855f7"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        dx={10}
+                        domain={[0, 250]}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: chartColors.tooltipBg,
+                          backdropFilter: "blur(10px)",
+                          border: `1px solid ${chartColors.tooltipBorder}`,
+                          borderRadius: "16px",
+                          color: chartColors.tooltipText,
+                          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+                        }}
+                      />
+                      <ReferenceLine
+                        yAxisId="right"
+                        y={targetRpm}
+                        stroke="#a855f7"
+                        strokeDasharray="5 5"
+                        label={{
+                          position: "insideTopLeft",
+                          value: `TARGET: ${targetRpm}`,
+                          fill: "#a855f7",
+                          fontSize: 10,
+                          fontWeight: "bold",
+                        }}
+                      />
+                      <Area
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey="temperature"
+                        name="Suhu (°C)"
+                        stroke="#f97316"
+                        strokeWidth={3}
+                        fill="url(#colorTemp)"
+                      />
+                      <Area
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey="ph"
+                        name="pH"
+                        stroke="#0ea5e9"
+                        strokeWidth={3}
+                        fill="url(#colorPh)"
+                      />
+                      <Line
+                        yAxisId="right"
+                        type="stepAfter"
+                        dataKey="rpm"
+                        name="RPM Aktual"
+                        stroke="#a855f7"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </div>
-          </div>
+          )}
+
+          {/* ==================================================== */}
+          {/* TAB 2: DATA & LOGS */}
+          {/* ==================================================== */}
+          {activeTab === "logs" && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Tabel Data Historis */}
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors duration-500 flex flex-col h-[600px]">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                      <TableProperties size={20} className="text-blue-500" />{" "}
+                      Data Historis
+                    </h3>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={startNewBatch}
+                      className="text-xs bg-slate-100 dark:bg-slate-800/80 px-4 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/10 hover:bg-slate-200 dark:hover:bg-slate-700 transition font-bold text-slate-600 dark:text-slate-300"
+                    >
+                      + NEW BATCH
+                    </button>
+                    <button
+                      onClick={exportToCSV}
+                      className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl ring-1 ring-emerald-200 dark:ring-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-500/40 transition font-bold text-emerald-600 dark:text-emerald-400"
+                    >
+                      <Download size={14} /> EXPORT CSV
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md">
+                      <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">
+                        <th className="p-4 font-semibold">Waktu</th>
+                        <th className="p-4 font-semibold">Suhu (°C)</th>
+                        <th className="p-4 font-semibold">pH</th>
+                        <th className="p-4 font-semibold">RPM</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Tampilkan data dari terbaru ke terlama */}
+                      {[...trendData].reverse().map((row, i) => (
+                        <tr
+                          key={i}
+                          className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm transition-colors"
+                        >
+                          <td className="p-4 font-mono">{row.time}</td>
+                          <td className="p-4">{row.temperature.toFixed(2)}</td>
+                          <td className="p-4">{row.ph.toFixed(2)}</td>
+                          <td className="p-4">{row.rpm}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {trendData.length === 0 && (
+                    <div className="p-8 text-center text-slate-500">
+                      Belum ada data di batch ini.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* System Logs */}
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[600px] transition-colors duration-500">
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2">
+                  <ShieldAlert
+                    size={20}
+                    className={
+                      isEStop
+                        ? "text-rose-500 animate-pulse"
+                        : "text-emerald-500"
+                    }
+                  />{" "}
+                  System Logs & K3
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
+                  Pencatatan event, peringatan sistem, dan error.
+                </p>
+
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                  {alarms.map((alarm) => (
+                    <div
+                      key={alarm.id}
+                      className={`p-4 rounded-2xl ring-1 transition-colors ${alarm.type === "CRITICAL" ? "bg-rose-50 dark:bg-rose-500/10 ring-rose-200 dark:ring-rose-500/30" : "bg-slate-50 dark:bg-slate-800/40 ring-slate-100 dark:ring-white/5 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-2">
+                          {alarm.type === "WARNING" && (
+                            <AlertTriangle
+                              size={16}
+                              className="text-amber-500 dark:text-amber-400"
+                            />
+                          )}
+                          {alarm.type === "CRITICAL" && (
+                            <AlertOctagon
+                              size={16}
+                              className="text-rose-600 dark:text-rose-500"
+                            />
+                          )}
+                          {alarm.type === "INFO" && (
+                            <CheckCircle2
+                              size={16}
+                              className="text-emerald-500 dark:text-emerald-400"
+                            />
+                          )}
+                          <span
+                            className={`text-xs font-bold tracking-wider ${alarm.type === "WARNING" ? "text-amber-600 dark:text-amber-400" : alarm.type === "CRITICAL" ? "text-rose-600 dark:text-rose-500" : "text-emerald-600 dark:text-emerald-400"}`}
+                          >
+                            {alarm.type}
+                          </span>
+                        </div>
+                        <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
+                          {alarm.time}
+                        </span>
+                      </div>
+                      <p
+                        className={`text-sm leading-relaxed ${alarm.type === "CRITICAL" ? "text-rose-700 dark:text-rose-300 font-medium" : "text-slate-600 dark:text-slate-300"}`}
+                      >
+                        {alarm.message}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
     </div>
@@ -537,12 +738,11 @@ function GradientCard({
 }: any) {
   return (
     <div
-      className={`relative overflow-hidden bg-white dark:bg-slate-900/50 backdrop-blur-md p-6 rounded-3xl border ${alert ? "border-rose-400 dark:border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.15)] dark:shadow-[0_0_20px_rgba(244,63,94,0.2)]" : "border-slate-200 dark:border-white/5"} shadow-md dark:shadow-none group transition-all hover:-translate-y-1`}
+      className={`relative overflow-hidden bg-white dark:bg-slate-900/50 backdrop-blur-md p-6 rounded-3xl border ${alert ? "border-rose-400 dark:border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.15)] dark:shadow-[0_0_20px_rgba(244,63,94,0.2)]" : "border-slate-200 dark:border-white/5"} shadow-sm hover:shadow-md dark:shadow-none group transition-all hover:-translate-y-1`}
     >
       <div
         className={`absolute -right-10 -top-10 w-32 h-32 bg-gradient-to-br ${color} opacity-10 dark:opacity-20 rounded-full blur-2xl group-hover:opacity-30 dark:group-hover:opacity-40 transition-opacity duration-500`}
       ></div>
-
       <div className="relative z-10 flex justify-between items-start mb-4">
         <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">
           {title}
@@ -555,7 +755,7 @@ function GradientCard({
       </div>
       <div className="relative z-10 flex items-baseline gap-2">
         <h3
-          className={`text-4xl font-extrabold tracking-tight ${alert ? "text-rose-600 dark:text-rose-400" : "text-slate-800 dark:text-white"}`}
+          className={`text-4xl font-extrabold tracking-tight ${alert ? "text-rose-600 dark:text-rose-400 animate-pulse" : "text-slate-800 dark:text-white"}`}
         >
           {value}
         </h3>
