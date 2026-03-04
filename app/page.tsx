@@ -64,7 +64,7 @@ export default function UltimateDashboard() {
   const [isOnline, setIsOnline] = useState(true);
 
   const [batchId, setBatchId] = useState<string>("PRD-2602-01");
-  const [targetRpm, setTargetRpm] = useState<number>(10);
+  const [targetRpm, setTargetRpm] = useState<number>(120);
 
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
   const [pastBatches, setPastBatches] = useState<BatchHistory[]>([]);
@@ -120,7 +120,6 @@ export default function UltimateDashboard() {
     const newId = `PRD-${Math.floor(Math.random() * 10000)}`;
     setBatchId(newId);
 
-    // Kosongkan data grafik dengan aman
     setTrendData([]);
     setViewingBatchId("current");
 
@@ -165,23 +164,38 @@ export default function UltimateDashboard() {
   };
 
   // ==========================================
-  // PERBAIKAN LOGIKA SIMULASI & GRAFIK DI SINI
+  // PERBAIKAN LOGIKA TERMODINAMIKA (SUHU)
   // ==========================================
   useEffect(() => {
     const interval = setInterval(() => {
-      const newTemp = +(metrics.temp + (Math.random() - 0.4)).toFixed(2);
+      // 1. Logika Suhu Berdasarkan Status Mesin
+      let tempDelta = 0;
+      if (systemStatus === "RUNNING" && !isEStop) {
+        // Pemanasan: Cenderung naik saat mesin menyala (+0.1 s/d +0.6)
+        tempDelta = Math.random() * 0.5 + 0.1;
+      } else {
+        // Pendinginan: Cenderung turun saat mesin mati atau E-Stop (-0.2 s/d -0.7)
+        tempDelta = -(Math.random() * 0.5 + 0.2);
+      }
+
+      let newTemp = +(metrics.temp + tempDelta).toFixed(2);
+
+      // Batas bawah pendinginan: suhu tidak mungkin turun di bawah suhu ruangan (misal 28°C)
+      if (newTemp < 28) {
+        newTemp = +(28 + Math.random() * 0.5).toFixed(2);
+      }
+
       const newPh = +(6.5 + Math.random() * 0.5).toFixed(2);
 
+      // 2. Logika RPM Ramping
       let newRpm = metrics.rpm;
-
-      // Jika mesin menyala, RPM naik perlahan ke target. Jika mati, langsung 0.
       if (systemStatus === "RUNNING" && !isEStop) {
         const rpmStep = 15;
         if (newRpm < targetRpm) newRpm = Math.min(newRpm + rpmStep, targetRpm);
         else if (newRpm > targetRpm)
           newRpm = Math.max(newRpm - rpmStep, targetRpm);
       } else {
-        newRpm = 0;
+        newRpm = 0; // Jika mati, RPM langsung 0
       }
 
       const now = new Date().toLocaleTimeString("id-ID", {
@@ -190,10 +204,10 @@ export default function UltimateDashboard() {
         second: "2-digit",
       });
 
-      // Cek Interlock K3
+      // 3. Logika Interlock Keselamatan
       if (newTemp >= 40 && !isEStop) {
         setIsEStop(true);
-        setSystemStatus("STOPPED");
+        setSystemStatus("STOPPED"); // Otomatis mati, sehingga pada detik berikutnya suhu akan mulai turun (cooling)
         setAlarms((prev) =>
           [
             {
@@ -229,7 +243,7 @@ export default function UltimateDashboard() {
 
       setMetrics({ temp: newTemp, ph: newPh, rpm: newRpm });
 
-      // Update Grafik: Biarkan tumbuh sampai 15 data, baru potong depannya
+      // 4. Update Grafik Historis
       setTrendData((prevTrend) => {
         const nextData = [
           ...prevTrend,
@@ -385,8 +399,8 @@ export default function UltimateDashboard() {
                       <input
                         type="range"
                         min="0"
-                        max="100"
-                        step="1"
+                        max="250"
+                        step="10"
                         value={targetRpm}
                         disabled={systemStatus === "RUNNING"}
                         onChange={(e) => setTargetRpm(Number(e.target.value))}
