@@ -167,7 +167,7 @@ export default function UltimateDashboard() {
               <h1 className="font-extrabold text-xl text-transparent bg-clip-text bg-gradient-to-r from-slate-800 to-slate-500 dark:from-white dark:to-slate-400 tracking-tight">
                 POC{" "}
                 <span className="font-light text-slate-400 dark:text-slate-500">
-                  NEXUS
+                  POLMAN Bandung
                 </span>
               </h1>
             </div>
