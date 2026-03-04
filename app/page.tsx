@@ -99,7 +99,7 @@ export default function UltimateDashboard() {
             time: new Date().toLocaleTimeString("id-ID"),
             type: "CRITICAL",
             message: "EMERGENCY STOP DITEKAN MANUAL!",
-          },
+          } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
           ...prev,
         ].slice(0, 50),
       );
@@ -117,7 +117,7 @@ export default function UltimateDashboard() {
           time: new Date().toLocaleTimeString("id-ID"),
           type: "INFO",
           message: `Batch baru dimulai: ${newId}`,
-        },
+        } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
         ...prev,
       ].slice(0, 50),
     );
@@ -176,7 +176,7 @@ export default function UltimateDashboard() {
               type: "CRITICAL",
               message:
                 "INTERLOCK: Suhu Kritis (>40°C). Mesin dimatikan otomatis!",
-            },
+            } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
             ...prev,
           ].slice(0, 50),
         );
@@ -220,7 +220,7 @@ export default function UltimateDashboard() {
               type: "WARNING",
               message:
                 "Suhu melampaui batas optimal (36°C). Periksa pendingin.",
-            },
+            } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
             ...prev,
           ].slice(0, 50),
         );
