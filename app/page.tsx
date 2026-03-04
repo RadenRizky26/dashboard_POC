@@ -46,33 +46,40 @@ interface AlarmLog {
   type: "WARNING" | "INFO" | "CRITICAL";
   message: string;
 }
+// Tipe baru untuk menyimpan riwayat batch
+interface BatchHistory {
+  id: string;
+  data: ProcessData[];
+}
 
 export default function UltimateDashboard() {
   const [isClient, setIsClient] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // State Navigasi Tab
   const [activeTab, setActiveTab] = useState<"control" | "logs">("control");
 
-  // State Engine & K3
   const [systemStatus, setSystemStatus] = useState<"RUNNING" | "STOPPED">(
     "STOPPED",
   );
   const [isEStop, setIsEStop] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
 
-  // State Produksi (MES)
   const [batchId, setBatchId] = useState<string>("PRD-2602-01");
-  const [targetRpm, setTargetRpm] = useState<number>(120);
+  const [targetRpm, setTargetRpm] = useState<number>(10);
 
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
+  // State baru untuk menyimpan kumpulan batch yang sudah lewat
+  const [pastBatches, setPastBatches] = useState<BatchHistory[]>([]);
+  // State untuk melacak batch mana yang sedang dilihat di tabel
+  const [viewingBatchId, setViewingBatchId] = useState<string>("current");
+
   const [alarms, setAlarms] = useState<AlarmLog[]>([
     {
       id: "1",
       time: new Date().toLocaleTimeString("id-ID"),
       type: "INFO",
       message: "Sistem HMI siap. Material diset ke Kulit Buah Kopi.",
-    },
+    } as AlarmLog,
   ]);
 
   const [metrics, setMetrics] = useState({ temp: 32.5, ph: 6.8, rpm: 0 });
@@ -99,7 +106,7 @@ export default function UltimateDashboard() {
             time: new Date().toLocaleTimeString("id-ID"),
             type: "CRITICAL",
             message: "EMERGENCY STOP DITEKAN MANUAL!",
-          } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
+          } as AlarmLog,
           ...prev,
         ].slice(0, 50),
       );
@@ -107,9 +114,20 @@ export default function UltimateDashboard() {
   };
 
   const startNewBatch = () => {
+    // 1. Simpan data batch saat ini ke dalam pastBatches sebelum dihapus
+    if (trendData.length > 0) {
+      setPastBatches((prev) => [
+        { id: batchId, data: [...trendData] },
+        ...prev,
+      ]);
+    }
+
+    // 2. Buat ID baru dan bersihkan data grafik untuk batch baru
     const newId = `PRD-${Math.floor(Math.random() * 10000)}`;
     setBatchId(newId);
     setTrendData([]);
+    setViewingBatchId("current"); // Kembalikan view tabel ke batch yang baru berjalan
+
     setAlarms((prev) =>
       [
         {
@@ -117,15 +135,27 @@ export default function UltimateDashboard() {
           time: new Date().toLocaleTimeString("id-ID"),
           type: "INFO",
           message: `Batch baru dimulai: ${newId}`,
-        } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
+        } as AlarmLog,
         ...prev,
       ].slice(0, 50),
     );
   };
 
+  // Logika export CSV disesuaikan dengan batch yang sedang dilihat
   const exportToCSV = () => {
+    const dataToExport =
+      viewingBatchId === "current"
+        ? trendData
+        : pastBatches.find((b) => b.id === viewingBatchId)?.data || [];
+    const exportId = viewingBatchId === "current" ? batchId : viewingBatchId;
+
+    if (dataToExport.length === 0) {
+      alert("Tidak ada data untuk di-export pada batch ini.");
+      return;
+    }
+
     const headers = "Waktu,Suhu(C),pH,RPM Aktual\n";
-    const csvData = trendData
+    const csvData = dataToExport
       .map(
         (row) =>
           `${row.time},${row.temperature.toFixed(2)},${row.ph.toFixed(2)},${row.rpm}`,
@@ -135,7 +165,7 @@ export default function UltimateDashboard() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Laporan_POC_${batchId}.csv`;
+    a.download = `Laporan_POC_${exportId}.csv`;
     a.click();
   };
 
@@ -176,7 +206,7 @@ export default function UltimateDashboard() {
               type: "CRITICAL",
               message:
                 "INTERLOCK: Suhu Kritis (>40°C). Mesin dimatikan otomatis!",
-            } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
+            } as AlarmLog,
             ...prev,
           ].slice(0, 50),
         );
@@ -220,7 +250,7 @@ export default function UltimateDashboard() {
               type: "WARNING",
               message:
                 "Suhu melampaui batas optimal (36°C). Periksa pendingin.",
-            } as AlarmLog, // <--- Tambahkan as AlarmLog di sini
+            } as AlarmLog,
             ...prev,
           ].slice(0, 50),
         );
@@ -241,10 +271,15 @@ export default function UltimateDashboard() {
     tooltipText: isDarkMode ? "#fff" : "#0f172a",
   };
 
+  // Tentukan data mana yang akan ditampilkan di tabel berdasarkan dropdown
+  const displayTableData =
+    viewingBatchId === "current"
+      ? trendData
+      : pastBatches.find((b) => b.id === viewingBatchId)?.data || [];
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
       <div className="min-h-screen bg-slate-50 dark:bg-[#0a0f1c] dark:bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] dark:from-slate-900 dark:via-[#0a0f1c] dark:to-[#050810] text-slate-800 dark:text-slate-200 font-sans transition-colors duration-500 selection:bg-emerald-500/30 pb-10">
-        {/* Top Navigation */}
         <nav className="sticky top-0 z-50 bg-white/70 dark:bg-slate-950/50 backdrop-blur-xl border-b border-slate-200 dark:border-white/5 px-8 py-4 flex justify-between items-center shadow-sm shadow-slate-200/40 dark:shadow-none transition-colors duration-500">
           <div className="flex items-center gap-4">
             <div className="bg-gradient-to-br from-emerald-400 to-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-500/20 ring-1 ring-emerald-500/20 dark:ring-white/20">
@@ -295,7 +330,6 @@ export default function UltimateDashboard() {
         </nav>
 
         <main className="p-8 max-w-[1600px] mx-auto">
-          {/* Header & Global Actions */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 border-b border-slate-200 dark:border-white/10 pb-6">
             <div>
               <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 transition-colors">
@@ -325,7 +359,6 @@ export default function UltimateDashboard() {
             </div>
           </div>
 
-          {/* TAB NAVIGATION */}
           <div className="flex gap-2 mb-8 border-b border-slate-200 dark:border-slate-800">
             <button
               onClick={() => setActiveTab("control")}
@@ -341,14 +374,10 @@ export default function UltimateDashboard() {
             </button>
           </div>
 
-          {/* ==================================================== */}
           {/* TAB 1: CONTROL PANEL */}
-          {/* ==================================================== */}
           {activeTab === "control" && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {/* Control Panel Actions - Bayangan diperhalus dan Dropdown diganti */}
               <div className="flex flex-wrap items-center gap-4 bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors">
-                {/* Informasi Material Statis */}
                 <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors flex-1 md:flex-none">
                   <FlaskConical size={20} className="text-amber-500" />
                   <div className="flex flex-col justify-center">
@@ -371,8 +400,8 @@ export default function UltimateDashboard() {
                       <input
                         type="range"
                         min="0"
-                        max="250"
-                        step="10"
+                        max="100"
+                        step="1"
                         value={targetRpm}
                         disabled={systemStatus === "RUNNING"}
                         onChange={(e) => setTargetRpm(Number(e.target.value))}
@@ -426,7 +455,6 @@ export default function UltimateDashboard() {
                 </div>
               </div>
 
-              {/* KPI Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <GradientCard
                   title="Suhu Tangki (PV)"
@@ -455,7 +483,6 @@ export default function UltimateDashboard() {
                 />
               </div>
 
-              {/* Grafik */}
               <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors duration-500">
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
                   Fermentation Analytics
@@ -594,12 +621,10 @@ export default function UltimateDashboard() {
             </div>
           )}
 
-          {/* ==================================================== */}
           {/* TAB 2: DATA & LOGS */}
-          {/* ==================================================== */}
           {activeTab === "logs" && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {/* Tabel Data Historis */}
+              {/* Tabel Data Historis dengan Dropdown Batch */}
               <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors duration-500 flex flex-col h-[600px]">
                 <div className="flex justify-between items-center mb-6">
                   <div>
@@ -608,7 +633,21 @@ export default function UltimateDashboard() {
                       Data Historis
                     </h3>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
+                    {/* Dropdown Pemilih Batch */}
+                    <select
+                      value={viewingBatchId}
+                      onChange={(e) => setViewingBatchId(e.target.value)}
+                      className="text-xs bg-slate-50 dark:bg-slate-800/80 px-3 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/10 outline-none text-slate-700 dark:text-slate-300 font-bold cursor-pointer"
+                    >
+                      <option value="current">🟢 Current ({batchId})</option>
+                      {pastBatches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          📁 History ({b.id})
+                        </option>
+                      ))}
+                    </select>
+
                     <button
                       onClick={startNewBatch}
                       className="text-xs bg-slate-100 dark:bg-slate-800/80 px-4 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/10 hover:bg-slate-200 dark:hover:bg-slate-700 transition font-bold text-slate-600 dark:text-slate-300"
@@ -635,8 +674,8 @@ export default function UltimateDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {/* Tampilkan data dari terbaru ke terlama */}
-                      {[...trendData].reverse().map((row, i) => (
+                      {/* Mapping dari array yang dipilih */}
+                      {[...displayTableData].reverse().map((row, i) => (
                         <tr
                           key={i}
                           className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm transition-colors"
@@ -649,7 +688,7 @@ export default function UltimateDashboard() {
                       ))}
                     </tbody>
                   </table>
-                  {trendData.length === 0 && (
+                  {displayTableData.length === 0 && (
                     <div className="p-8 text-center text-slate-500">
                       Belum ada data di batch ini.
                     </div>
