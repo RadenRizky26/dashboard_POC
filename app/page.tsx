@@ -64,7 +64,7 @@ export default function UltimateDashboard() {
   const [isOnline, setIsOnline] = useState(true);
 
   const [batchId, setBatchId] = useState<string>("PRD-2602-01");
-  const [targetRpm, setTargetRpm] = useState<number>(120);
+  const [targetRpm, setTargetRpm] = useState<number>(10);
 
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
   const [pastBatches, setPastBatches] = useState<BatchHistory[]>([]);
@@ -289,7 +289,7 @@ export default function UltimateDashboard() {
               <h1 className="font-extrabold text-xl text-transparent bg-clip-text bg-gradient-to-r from-slate-800 to-slate-500 dark:from-white dark:to-slate-400 tracking-tight">
                 POC{" "}
                 <span className="font-light text-slate-400 dark:text-slate-500">
-                  POLMAN Bandung
+                  Dashboard
                 </span>
               </h1>
             </div>
@@ -399,8 +399,8 @@ export default function UltimateDashboard() {
                       <input
                         type="range"
                         min="0"
-                        max="250"
-                        step="10"
+                        max="100"
+                        step="1"
                         value={targetRpm}
                         disabled={systemStatus === "RUNNING"}
                         onChange={(e) => setTargetRpm(Number(e.target.value))}
