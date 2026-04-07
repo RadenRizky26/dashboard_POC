@@ -19,7 +19,6 @@ import {
   Clock,
   Zap,
   Thermometer,
-  Gauge,
   ShieldAlert,
   Settings2,
   Sun,
@@ -31,19 +30,21 @@ import {
   SlidersHorizontal,
   ClipboardList,
   TableProperties,
+  Power,
+  CalendarCheck,
 } from "lucide-react";
 
 // --- Types ---
 interface ProcessData {
   time: string;
   temperature: number;
-  ph: number;
-  rpm: number;
+  dimmer: number;
+  days: number;
 }
 interface AlarmLog {
   id: string;
   time: string;
-  type: "WARNING" | "INFO" | "CRITICAL";
+  type: "WARNING" | "INFO" | "CRITICAL" | "SUCCESS";
   message: string;
 }
 interface BatchHistory {
@@ -51,21 +52,22 @@ interface BatchHistory {
   data: ProcessData[];
 }
 
-export default function UltimateDashboard() {
+type ProcessState = "IDLE" | "HEATING" | "FERMENTING" | "COMPLETED";
+
+export default function FlowchartDashboard() {
   const [isClient, setIsClient] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
-
   const [activeTab, setActiveTab] = useState<"control" | "logs">("control");
 
-  const [systemStatus, setSystemStatus] = useState<"RUNNING" | "STOPPED">(
-    "STOPPED",
-  );
+  // State Flowchart
+  const [processState, setProcessState] = useState<ProcessState>("IDLE");
+  const TARGET_TEMP = 40; // Setpoint Suhu sesuai Flowchart
+  const TARGET_DAYS = 14; // Target Fermentasi sesuai Flowchart
+
   const [isEStop, setIsEStop] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
 
-  const [batchId, setBatchId] = useState<string>("PRD-2602-01");
-  const [targetRpm, setTargetRpm] = useState<number>(10);
-
+  const [batchId, setBatchId] = useState<string>("PRD-Kopi-01");
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
   const [pastBatches, setPastBatches] = useState<BatchHistory[]>([]);
   const [viewingBatchId, setViewingBatchId] = useState<string>("current");
@@ -75,34 +77,79 @@ export default function UltimateDashboard() {
       id: "1",
       time: new Date().toLocaleTimeString("id-ID"),
       type: "INFO",
-      message: "Sistem HMI siap. Material diset ke Kulit Buah Kopi.",
+      message: "Inisiasi Sistem Hardware selesai. Menunggu Penekanan PB A.",
     } as AlarmLog,
   ]);
 
-  const [metrics, setMetrics] = useState({ temp: 32.5, ph: 6.8, rpm: 0 });
+  // Metrics: Suhu, AC Dimmer Output (%), dan Hari
+  const [metrics, setMetrics] = useState({ temp: 28.5, dimmer: 0, days: 0 });
 
   useEffect(() => {
     setIsClient(true);
     const initial = Array.from({ length: 15 }, (_, i) => ({
       time: `10:${i < 10 ? "0" + i : i}`,
-      temperature: 30 + Math.random() * 5,
-      ph: 6.5 + Math.random() * 0.5,
-      rpm: 0,
+      temperature: 28 + Math.random() * 1,
+      dimmer: 0,
+      days: 0,
     }));
     setTrendData(initial);
   }, []);
 
   const toggleEStop = () => {
     setIsEStop(!isEStop);
-    setSystemStatus("STOPPED");
     if (!isEStop) {
+      setProcessState("IDLE");
       setAlarms((prev) =>
         [
           {
             id: Date.now().toString(),
             time: new Date().toLocaleTimeString("id-ID"),
             type: "CRITICAL",
-            message: "EMERGENCY STOP DITEKAN MANUAL!",
+            message: "EMERGENCY STOP! Heater Dimatikan Paksa.",
+          } as AlarmLog,
+          ...prev,
+        ].slice(0, 50),
+      );
+    } else {
+      setAlarms((prev) =>
+        [
+          {
+            id: Date.now().toString(),
+            time: new Date().toLocaleTimeString("id-ID"),
+            type: "INFO",
+            message: "E-Stop di-reset. Menunggu Penekanan PB A.",
+          } as AlarmLog,
+          ...prev,
+        ].slice(0, 50),
+      );
+    }
+  };
+
+  // Tombol ini mewakili "Penekanan PB A" di Flowchart
+  const handlePushButtonA = () => {
+    if (processState === "IDLE" || processState === "COMPLETED") {
+      setProcessState("HEATING");
+      setMetrics((prev) => ({ ...prev, days: 0 })); // Reset hari jika mulai ulang
+      setAlarms((prev) =>
+        [
+          {
+            id: Date.now().toString(),
+            time: new Date().toLocaleTimeString("id-ID"),
+            type: "INFO",
+            message: `PB A Ditekan. Setpoint Suhu: 40°C. Heater Menyala.`,
+          } as AlarmLog,
+          ...prev,
+        ].slice(0, 50),
+      );
+    } else {
+      setProcessState("IDLE"); // Tombol Stop Manual
+      setAlarms((prev) =>
+        [
+          {
+            id: Date.now().toString(),
+            time: new Date().toLocaleTimeString("id-ID"),
+            type: "WARNING",
+            message: "Proses dihentikan manual oleh user.",
           } as AlarmLog,
           ...prev,
         ].slice(0, 50),
@@ -117,19 +164,19 @@ export default function UltimateDashboard() {
         ...prev,
       ]);
     }
-    const newId = `PRD-${Math.floor(Math.random() * 10000)}`;
+    const newId = `PRD-Kopi-${Math.floor(Math.random() * 1000)}`;
     setBatchId(newId);
-
     setTrendData([]);
     setViewingBatchId("current");
-
+    setProcessState("IDLE");
+    setMetrics({ temp: 28.5, dimmer: 0, days: 0 });
     setAlarms((prev) =>
       [
         {
           id: Date.now().toString(),
           time: new Date().toLocaleTimeString("id-ID"),
           type: "INFO",
-          message: `Batch baru dimulai: ${newId}`,
+          message: `Batch baru dimulai: ${newId}. Menunggu Penekanan PB A.`,
         } as AlarmLog,
         ...prev,
       ].slice(0, 50),
@@ -141,124 +188,139 @@ export default function UltimateDashboard() {
       viewingBatchId === "current"
         ? trendData
         : pastBatches.find((b) => b.id === viewingBatchId)?.data || [];
-    const exportId = viewingBatchId === "current" ? batchId : viewingBatchId;
+    if (dataToExport.length === 0)
+      return alert("Tidak ada data untuk di-export pada batch ini.");
 
-    if (dataToExport.length === 0) {
-      alert("Tidak ada data untuk di-export pada batch ini.");
-      return;
-    }
-
-    const headers = "Waktu,Suhu(C),pH,RPM Aktual\n";
+    const headers = "Waktu,Suhu(C),Dimmer(%),Waktu Fermentasi(Hari)\n";
     const csvData = dataToExport
       .map(
         (row) =>
-          `${row.time},${row.temperature.toFixed(2)},${row.ph.toFixed(2)},${row.rpm}`,
+          `${row.time},${row.temperature.toFixed(2)},${row.dimmer},${row.days.toFixed(1)}`,
       )
       .join("\n");
     const blob = new Blob([headers + csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Laporan_POC_${exportId}.csv`;
+    a.download = `Laporan_Fermentasi_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
     a.click();
   };
 
   // ==========================================
-  // PERBAIKAN LOGIKA TERMODINAMIKA (SUHU)
+  // LOGIKA SIMULASI SESUAI FLOWCHART
   // ==========================================
   useEffect(() => {
     const interval = setInterval(() => {
-      // 1. Logika Suhu Berdasarkan Status Mesin
-      let tempDelta = 0;
-      if (systemStatus === "RUNNING" && !isEStop) {
-        // Pemanasan: Cenderung naik saat mesin menyala (+0.1 s/d +0.6)
-        tempDelta = Math.random() * 0.5 + 0.1;
-      } else {
-        // Pendinginan: Cenderung turun saat mesin mati atau E-Stop (-0.2 s/d -0.7)
-        tempDelta = -(Math.random() * 0.5 + 0.2);
-      }
+      setMetrics((prev) => {
+        let { temp, dimmer, days } = prev;
+        const nowStr = new Date().toLocaleTimeString("id-ID", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
 
-      let newTemp = +(metrics.temp + tempDelta).toFixed(2);
+        if (isEStop) {
+          dimmer = 0;
+          temp = Math.max(28, temp - (Math.random() * 0.5 + 0.2));
+        } else if (processState === "HEATING") {
+          // Fase 1: Heater Menyala (AC Dimmer Output Full)
+          dimmer = 90 + Math.floor(Math.random() * 10); // Dimmer 90-100%
+          temp += Math.random() * 0.8 + 0.5; // Suhu naik cepat
 
-      // Batas bawah pendinginan: suhu tidak mungkin turun di bawah suhu ruangan (misal 28°C)
-      if (newTemp < 28) {
-        newTemp = +(28 + Math.random() * 0.5).toFixed(2);
-      }
+          // Decision: SUHU Sesuai? (>= 40°C)
+          if (temp >= TARGET_TEMP) {
+            setProcessState("FERMENTING");
+            setAlarms((a) =>
+              [
+                {
+                  id: Date.now().toString(),
+                  time: nowStr,
+                  type: "INFO",
+                  message:
+                    "Suhu 40°C tercapai. Memulai Proses Fermentasi 14 Hari.",
+                } as AlarmLog,
+                ...a,
+              ].slice(0, 50),
+            );
+          }
+        } else if (processState === "FERMENTING") {
+          // Fase 2: Proses Fermentasi 14 Hari (AC Dimmer menstabilkan Suhu 40°C)
+          if (temp < 39.5)
+            dimmer = 60 + Math.floor(Math.random() * 20); // Tambah panas
+          else if (temp > 40.5)
+            dimmer = 10 + Math.floor(Math.random() * 10); // Kurangi panas
+          else dimmer = 30 + Math.floor(Math.random() * 10); // Stabil
 
-      const newPh = +(6.5 + Math.random() * 0.5).toFixed(2);
+          temp += dimmer > 40 ? Math.random() * 0.2 : -(Math.random() * 0.2);
 
-      // 2. Logika RPM Ramping
-      let newRpm = metrics.rpm;
-      if (systemStatus === "RUNNING" && !isEStop) {
-        const rpmStep = 15;
-        if (newRpm < targetRpm) newRpm = Math.min(newRpm + rpmStep, targetRpm);
-        else if (newRpm > targetRpm)
-          newRpm = Math.max(newRpm - rpmStep, targetRpm);
-      } else {
-        newRpm = 0; // Jika mati, RPM langsung 0
-      }
+          // Simulasi waktu dipercepat (1 tick interval = 0.5 Hari di layar)
+          days += 0.5;
 
-      const now = new Date().toLocaleTimeString("id-ID", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
+          // Decision: Proses Fermentasi 14 Hari selesai?
+          if (days >= TARGET_DAYS) {
+            days = TARGET_DAYS;
+            setProcessState("COMPLETED");
+            // Heater Kondisi Off & HMI Menampilkan Proses Selesai
+            setAlarms((a) =>
+              [
+                {
+                  id: Date.now().toString(),
+                  time: nowStr,
+                  type: "SUCCESS",
+                  message:
+                    "PROSES SELESAI: Fermentasi 14 Hari berhasil. Heater OFF.",
+                } as AlarmLog,
+                ...a,
+              ].slice(0, 50),
+            );
+          }
+        } else if (processState === "COMPLETED" || processState === "IDLE") {
+          // Fase 3: Selesai / Menunggu
+          dimmer = 0; // Heater OFF
+          temp = Math.max(28, temp - (Math.random() * 0.4 + 0.1)); // Suhu mendingin ke suhu ruang
+        }
 
-      // 3. Logika Interlock Keselamatan
-      if (newTemp >= 40 && !isEStop) {
-        setIsEStop(true);
-        setSystemStatus("STOPPED"); // Otomatis mati, sehingga pada detik berikutnya suhu akan mulai turun (cooling)
-        setAlarms((prev) =>
-          [
+        // Keselamatan (Overheat Alert jika sistem error/simulasi melonjak)
+        if (temp > 45 && !isEStop) {
+          setIsEStop(true);
+          setProcessState("IDLE");
+          setAlarms((a) =>
+            [
+              {
+                id: Date.now().toString(),
+                time: nowStr,
+                type: "CRITICAL",
+                message:
+                  "INTERLOCK: Overheat (>45°C). Heater Dimatikan Otomatis!",
+              } as AlarmLog,
+              ...a,
+            ].slice(0, 50),
+          );
+          dimmer = 0;
+        }
+
+        const newMetrics = { temp: +temp.toFixed(2), dimmer, days };
+
+        // Update Grafik
+        setTrendData((prevTrend) => {
+          const nextData = [
+            ...prevTrend,
             {
-              id: Date.now().toString(),
-              time: now,
-              type: "CRITICAL",
-              message:
-                "INTERLOCK: Suhu Kritis (>40°C). Mesin dimatikan otomatis!",
-            } as AlarmLog,
-            ...prev,
-          ].slice(0, 50),
-        );
-        newRpm = 0;
-      } else if (
-        newTemp > 36 &&
-        newTemp < 40 &&
-        alarms.length > 0 &&
-        alarms[0].message.indexOf("optimal") === -1
-      ) {
-        setAlarms((prev) =>
-          [
-            {
-              id: Date.now().toString(),
-              time: now,
-              type: "WARNING",
-              message:
-                "Suhu melampaui batas optimal (36°C). Periksa pendingin.",
-            } as AlarmLog,
-            ...prev,
-          ].slice(0, 50),
-        );
-      }
+              time: nowStr.slice(0, 5),
+              temperature: newMetrics.temp,
+              dimmer: newMetrics.dimmer,
+              days: newMetrics.days,
+            },
+          ];
+          return nextData.length > 20 ? nextData.slice(1) : nextData;
+        });
 
-      setMetrics({ temp: newTemp, ph: newPh, rpm: newRpm });
-
-      // 4. Update Grafik Historis
-      setTrendData((prevTrend) => {
-        const nextData = [
-          ...prevTrend,
-          {
-            time: now.slice(0, 5),
-            temperature: newTemp,
-            ph: newPh,
-            rpm: newRpm,
-          },
-        ];
-        return nextData.length > 15 ? nextData.slice(1) : nextData;
+        return newMetrics;
       });
-    }, 3000);
+    }, 2000); // Update setiap 2 detik
+
     return () => clearInterval(interval);
-  }, [systemStatus, metrics, alarms, targetRpm, isEStop]);
+  }, [processState, isEStop]);
 
   if (!isClient) return null;
 
@@ -277,9 +339,30 @@ export default function UltimateDashboard() {
       ? trendData
       : pastBatches.find((b) => b.id === viewingBatchId)?.data || [];
 
+  // Teks Status HMI berdasarkan flowchart
+  const getHmiStatusText = () => {
+    if (isEStop) return { text: "SYSTEM LOCKED", color: "text-rose-500" };
+    if (processState === "IDLE")
+      return { text: "MENUNGGU PENEKANAN PB A", color: "text-slate-500" };
+    if (processState === "HEATING")
+      return {
+        text: "HEATER MENYALA (MENCAPAI 40°C)",
+        color: "text-orange-500 animate-pulse",
+      };
+    if (processState === "FERMENTING")
+      return {
+        text: "PROSES FERMENTASI (MAINTAIN 40°C)",
+        color: "text-amber-500",
+      };
+    if (processState === "COMPLETED")
+      return { text: "PROSES SELESAI", color: "text-emerald-500 font-black" };
+    return { text: "-", color: "" };
+  };
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
       <div className="min-h-screen bg-slate-50 dark:bg-[#0a0f1c] dark:bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] dark:from-slate-900 dark:via-[#0a0f1c] dark:to-[#050810] text-slate-800 dark:text-slate-200 font-sans transition-colors duration-500 selection:bg-emerald-500/30 pb-10">
+        {/* Navigation */}
         <nav className="sticky top-0 z-50 bg-white/70 dark:bg-slate-950/50 backdrop-blur-xl border-b border-slate-200 dark:border-white/5 px-8 py-4 flex justify-between items-center shadow-sm shadow-slate-200/40 dark:shadow-none transition-colors duration-500">
           <div className="flex items-center gap-4">
             <div className="bg-gradient-to-br from-emerald-400 to-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-500/20 ring-1 ring-emerald-500/20 dark:ring-white/20">
@@ -289,40 +372,15 @@ export default function UltimateDashboard() {
               <h1 className="font-extrabold text-xl text-transparent bg-clip-text bg-gradient-to-r from-slate-800 to-slate-500 dark:from-white dark:to-slate-400 tracking-tight">
                 POC{" "}
                 <span className="font-light text-slate-400 dark:text-slate-500">
-                  Dashboard
+                  Thermal Control
                 </span>
               </h1>
             </div>
           </div>
-
           <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-4 text-slate-500 dark:text-slate-400 font-medium text-xs tracking-wider mr-4">
-              <span className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/50 px-3 py-1.5 rounded-full ring-1 ring-slate-200 dark:ring-white/5 transition-colors">
-                <Wifi
-                  size={14}
-                  className={isOnline ? "text-emerald-500" : "text-rose-500"}
-                />
-                {isOnline ? "Sensor Online" : "Sensor Offline"}
-              </span>
-              <span className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/50 px-3 py-1.5 rounded-full ring-1 ring-slate-200 dark:ring-white/5 transition-colors">
-                <Database
-                  size={14}
-                  className="text-blue-500 dark:text-blue-400"
-                />{" "}
-                PostgreSQL Sync
-              </span>
-              <span className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/50 px-3 py-1.5 rounded-full ring-1 ring-slate-200 dark:ring-white/5 transition-colors">
-                <Clock
-                  size={14}
-                  className="text-emerald-500 dark:text-emerald-400"
-                />{" "}
-                {new Date().toLocaleDateString("id-ID")}
-              </span>
-            </div>
-
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 hover:text-emerald-500 dark:hover:text-emerald-400 ring-1 ring-slate-200 dark:ring-white/5 transition-all active:scale-95"
+              className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/50 text-slate-500 hover:text-emerald-500 ring-1 ring-slate-200 dark:ring-white/5 transition-all"
             >
               {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
@@ -330,18 +388,18 @@ export default function UltimateDashboard() {
         </nav>
 
         <main className="p-8 max-w-[1600px] mx-auto">
+          {/* Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 border-b border-slate-200 dark:border-white/10 pb-6">
             <div>
               <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 transition-colors">
-                System <span className="text-emerald-500">Overview</span>
+                Fermentation <span className="text-emerald-500">HMI</span>
               </h2>
               <p className="text-slate-500 dark:text-slate-400 transition-colors">
-                Monitoring mesin pengaduk Pupuk Organik Cair terintegrasi.
+                Sistem kontrol Heater & AC Dimmer sesuai Diagram Alir Kopi.
               </p>
             </div>
-
             <div className="flex items-center gap-4">
-              <div className="bg-slate-100 dark:bg-slate-800/50 px-4 py-2.5 rounded-xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors flex flex-col justify-center">
+              <div className="bg-slate-100 dark:bg-slate-800/50 px-4 py-2.5 rounded-xl ring-1 ring-slate-200 dark:ring-white/5 flex flex-col">
                 <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold block mb-0.5">
                   Active Batch ID
                 </span>
@@ -353,141 +411,121 @@ export default function UltimateDashboard() {
                 onClick={toggleEStop}
                 className={`p-3 px-8 rounded-xl font-black tracking-widest flex items-center gap-2 transition-all active:scale-95 ${isEStop ? "bg-rose-600 text-white shadow-[0_0_20px_rgba(225,29,72,0.4)] animate-pulse" : "bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-500 ring-1 ring-rose-500/50 hover:bg-rose-600 hover:text-white"}`}
               >
-                <AlertOctagon size={20} />
-                {isEStop ? "RESET E-STOP" : "E-STOP"}
+                <AlertOctagon size={20} /> {isEStop ? "RESET E-STOP" : "E-STOP"}
               </button>
             </div>
           </div>
 
+          {/* TAB NAVIGATION */}
           <div className="flex gap-2 mb-8 border-b border-slate-200 dark:border-slate-800">
             <button
               onClick={() => setActiveTab("control")}
-              className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "control" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"}`}
+              className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "control" ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500"}`}
             >
               <SlidersHorizontal size={18} /> Control Panel
             </button>
             <button
               onClick={() => setActiveTab("logs")}
-              className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "logs" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"}`}
+              className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "logs" ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500"}`}
             >
               <ClipboardList size={18} /> Data & Logs
             </button>
           </div>
 
+          {/* TAB 1: CONTROL PANEL */}
           {activeTab === "control" && (
-            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="flex flex-wrap items-center gap-4 bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors">
-                <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors flex-1 md:flex-none">
-                  <FlaskConical size={20} className="text-amber-500" />
-                  <div className="flex flex-col justify-center">
-                    <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-1">
-                      Material Baku
-                    </span>
-                    <span className="text-sm font-bold text-slate-700 dark:text-white">
-                      Kulit Buah Kopi
-                    </span>
+            <div className="space-y-8 animate-in fade-in duration-500">
+              {/* Panel Aksi & Status (HMI Menampilkan Sesuai Flowchart) */}
+              <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-6 bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none">
+                {/* Status Teks Besar */}
+                <div className="flex-1 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-white/10 pb-4 lg:pb-0 lg:pr-6">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-2">
+                    STATUS LAYAR HMI
+                  </span>
+                  <div
+                    className={`text-lg md:text-xl font-bold tracking-wide ${getHmiStatusText().color}`}
+                  >
+                    {getHmiStatusText().text}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors flex-1 md:flex-none">
-                  <Settings2 size={20} className="text-purple-500" />
-                  <div className="flex flex-col justify-center">
-                    <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-1">
-                      Set Target RPM
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        step="1"
-                        value={targetRpm}
-                        disabled={systemStatus === "RUNNING"}
-                        onChange={(e) => setTargetRpm(Number(e.target.value))}
-                        className="w-24 accent-purple-500 cursor-pointer disabled:opacity-50"
-                      />
-                      <span className="text-sm font-bold text-purple-600 dark:text-purple-400 font-mono w-8">
-                        {targetRpm}
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 flex items-center gap-4">
+                    <Thermometer size={20} className="text-orange-500" />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">
+                        Setpoint Suhu
                       </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 transition-colors ml-auto">
-                  <div className="pl-4 pr-2 flex flex-col justify-center">
-                    <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500 font-bold">
-                      Engine State
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex h-3 w-3">
-                        {systemStatus === "RUNNING" && (
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        )}
-                        <span
-                          className={`relative inline-flex rounded-full h-3 w-3 ${systemStatus === "RUNNING" ? "bg-emerald-500" : isEStop ? "bg-rose-500" : "bg-slate-400 dark:bg-slate-600"}`}
-                        ></span>
-                      </span>
-                      <span
-                        className={`text-sm font-bold ${systemStatus === "RUNNING" ? "text-emerald-600 dark:text-emerald-400" : isEStop ? "text-rose-600 dark:text-rose-400" : "text-slate-500"}`}
-                      >
-                        {isEStop ? "LOCKED" : systemStatus}
+                      <span className="text-sm font-bold text-slate-700 dark:text-white">
+                        {TARGET_TEMP} °C
                       </span>
                     </div>
                   </div>
 
+                  <div className="bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 flex items-center gap-4">
+                    <CalendarCheck size={20} className="text-blue-500" />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">
+                        Target Fermentasi
+                      </span>
+                      <span className="text-sm font-bold text-slate-700 dark:text-white">
+                        {TARGET_DAYS} Hari
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Push Button A */}
                   <button
-                    onClick={() =>
-                      setSystemStatus(
-                        systemStatus === "RUNNING" ? "STOPPED" : "RUNNING",
-                      )
-                    }
+                    onClick={handlePushButtonA}
                     disabled={isEStop}
-                    className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
-                      systemStatus === "RUNNING"
-                        ? "bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white"
-                        : "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-600 hover:text-white"
+                    className={`px-8 py-4 rounded-xl font-black tracking-widest flex items-center gap-3 transition-all duration-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                      processState === "IDLE" || processState === "COMPLETED"
+                        ? "bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:bg-emerald-400"
+                        : "bg-rose-50 dark:bg-rose-500/20 text-rose-600 hover:bg-rose-600 hover:text-white"
                     }`}
                   >
-                    <Zap size={18} />{" "}
-                    {systemStatus === "RUNNING" ? "SHUTDOWN" : "START MIXER"}
+                    <Power size={20} />
+                    {processState === "IDLE" || processState === "COMPLETED"
+                      ? "TEKAN PB A (MULAI)"
+                      : "HENTIKAN PROSES"}
                   </button>
                 </div>
               </div>
 
+              {/* KPI Grid sesuai Flowchart */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <GradientCard
-                  title="Suhu Tangki (PV)"
+                  title="Suhu Pembacaan Sensor"
                   value={metrics.temp.toFixed(1)}
                   unit="°C"
                   icon={<Thermometer size={24} />}
                   color="from-orange-400 to-orange-600 dark:from-orange-500 dark:to-red-600"
-                  alert={metrics.temp > 35}
-                  isDark={isDarkMode}
+                  alert={metrics.temp > 42}
                 />
                 <GradientCard
-                  title="Level pH (PV)"
-                  value={metrics.ph.toFixed(2)}
-                  unit="pH"
-                  icon={<Activity size={24} />}
-                  color="from-blue-400 to-blue-600 dark:from-blue-500 dark:to-cyan-600"
-                  isDark={isDarkMode}
-                />
-                <GradientCard
-                  title="Kecepatan Motor (SV)"
-                  value={metrics.rpm}
-                  unit="RPM"
-                  icon={<Gauge size={24} />}
+                  title="Output AC Dimmer"
+                  value={metrics.dimmer}
+                  unit="%"
+                  icon={<Zap size={24} />}
                   color="from-purple-500 to-purple-700 dark:from-indigo-500 dark:to-purple-600"
-                  isDark={isDarkMode}
+                  alert={metrics.dimmer > 95}
+                />
+                <GradientCard
+                  title="Progress Fermentasi"
+                  value={Math.floor(metrics.days)}
+                  unit={`/ ${TARGET_DAYS} Hari`}
+                  icon={<Clock size={24} />}
+                  color="from-blue-400 to-blue-600 dark:from-blue-500 dark:to-cyan-600"
                 />
               </div>
 
-              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors duration-500">
+              {/* Grafik Thermal */}
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none">
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
-                  Fermentation Analytics
+                  Thermal & Output Analytics
                 </h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">
-                  Real-time data tren Suhu, pH, dan RPM Motor
+                  Pemantauan keseimbangan Suhu dan persentase kerja AC Dimmer.
                 </p>
 
                 <div className="h-[350px] w-full">
@@ -509,24 +547,6 @@ export default function UltimateDashboard() {
                           <stop
                             offset="95%"
                             stopColor="#f97316"
-                            stopOpacity={0}
-                          />
-                        </linearGradient>
-                        <linearGradient
-                          id="colorPh"
-                          x1="0"
-                          y1="0"
-                          x2="0"
-                          y2="1"
-                        >
-                          <stop
-                            offset="5%"
-                            stopColor="#0ea5e9"
-                            stopOpacity={0.3}
-                          />
-                          <stop
-                            offset="95%"
-                            stopColor="#0ea5e9"
                             stopOpacity={0}
                           />
                         </linearGradient>
@@ -561,7 +581,7 @@ export default function UltimateDashboard() {
                         tickLine={false}
                         axisLine={false}
                         dx={10}
-                        domain={[0, 250]}
+                        domain={[0, 100]}
                       />
                       <Tooltip
                         contentStyle={{
@@ -570,22 +590,23 @@ export default function UltimateDashboard() {
                           border: `1px solid ${chartColors.tooltipBorder}`,
                           borderRadius: "16px",
                           color: chartColors.tooltipText,
-                          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
                         }}
                       />
+
                       <ReferenceLine
-                        yAxisId="right"
-                        y={targetRpm}
-                        stroke="#a855f7"
+                        yAxisId="left"
+                        y={TARGET_TEMP}
+                        stroke="#f97316"
                         strokeDasharray="5 5"
                         label={{
                           position: "insideTopLeft",
-                          value: `TARGET: ${targetRpm}`,
-                          fill: "#a855f7",
+                          value: `SETPOINT: ${TARGET_TEMP}°C`,
+                          fill: "#f97316",
                           fontSize: 10,
                           fontWeight: "bold",
                         }}
                       />
+
                       <Area
                         yAxisId="left"
                         type="monotone"
@@ -594,24 +615,17 @@ export default function UltimateDashboard() {
                         stroke="#f97316"
                         strokeWidth={3}
                         fill="url(#colorTemp)"
-                      />
-                      <Area
-                        yAxisId="left"
-                        type="monotone"
-                        dataKey="ph"
-                        name="pH"
-                        stroke="#0ea5e9"
-                        strokeWidth={3}
-                        fill="url(#colorPh)"
+                        isAnimationActive={false}
                       />
                       <Line
                         yAxisId="right"
                         type="stepAfter"
-                        dataKey="rpm"
-                        name="RPM Aktual"
+                        dataKey="dimmer"
+                        name="AC Dimmer (%)"
                         stroke="#a855f7"
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                       />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -620,16 +634,15 @@ export default function UltimateDashboard() {
             </div>
           )}
 
+          {/* TAB 2: DATA & LOGS */}
           {activeTab === "logs" && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none transition-colors duration-500 flex flex-col h-[600px]">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-500">
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[600px]">
                 <div className="flex justify-between items-center mb-6">
-                  <div>
-                    <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                      <TableProperties size={20} className="text-blue-500" />{" "}
-                      Data Historis
-                    </h3>
-                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <TableProperties size={20} className="text-blue-500" /> Data
+                    Historis
+                  </h3>
                   <div className="flex gap-2 items-center">
                     <select
                       value={viewingBatchId}
@@ -643,7 +656,6 @@ export default function UltimateDashboard() {
                         </option>
                       ))}
                     </select>
-
                     <button
                       onClick={startNewBatch}
                       className="text-xs bg-slate-100 dark:bg-slate-800/80 px-4 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/10 hover:bg-slate-200 dark:hover:bg-slate-700 transition font-bold text-slate-600 dark:text-slate-300"
@@ -652,9 +664,9 @@ export default function UltimateDashboard() {
                     </button>
                     <button
                       onClick={exportToCSV}
-                      className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl ring-1 ring-emerald-200 dark:ring-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-500/40 transition font-bold text-emerald-600 dark:text-emerald-400"
+                      className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl ring-1 ring-emerald-200 dark:ring-emerald-500/30 hover:bg-emerald-100 transition font-bold text-emerald-600"
                     >
-                      <Download size={14} /> EXPORT CSV
+                      <Download size={14} /> CSV
                     </button>
                   </div>
                 </div>
@@ -665,33 +677,33 @@ export default function UltimateDashboard() {
                       <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">
                         <th className="p-4 font-semibold">Waktu</th>
                         <th className="p-4 font-semibold">Suhu (°C)</th>
-                        <th className="p-4 font-semibold">pH</th>
-                        <th className="p-4 font-semibold">RPM</th>
+                        <th className="p-4 font-semibold">Dimmer (%)</th>
+                        <th className="p-4 font-semibold">Hari Ke-</th>
                       </tr>
                     </thead>
                     <tbody>
                       {[...displayTableData].reverse().map((row, i) => (
                         <tr
                           key={i}
-                          className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm transition-colors"
+                          className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm"
                         >
                           <td className="p-4 font-mono">{row.time}</td>
                           <td className="p-4">{row.temperature.toFixed(2)}</td>
-                          <td className="p-4">{row.ph.toFixed(2)}</td>
-                          <td className="p-4">{row.rpm}</td>
+                          <td className="p-4">{row.dimmer}</td>
+                          <td className="p-4">{Math.floor(row.days)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                   {displayTableData.length === 0 && (
                     <div className="p-8 text-center text-slate-500">
-                      Menunggu data sensor masuk...
+                      Menunggu data sensor...
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[600px] transition-colors duration-500">
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[600px]">
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2">
                   <ShieldAlert
                     size={20}
@@ -701,50 +713,50 @@ export default function UltimateDashboard() {
                         : "text-emerald-500"
                     }
                   />{" "}
-                  System Logs & K3
+                  System Sequence Log
                 </h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
-                  Pencatatan event, peringatan sistem, dan error.
+                  Pencatatan tahapan Diagram Alir.
                 </p>
 
                 <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
                   {alarms.map((alarm) => (
                     <div
                       key={alarm.id}
-                      className={`p-4 rounded-2xl ring-1 transition-colors ${alarm.type === "CRITICAL" ? "bg-rose-50 dark:bg-rose-500/10 ring-rose-200 dark:ring-rose-500/30" : "bg-slate-50 dark:bg-slate-800/40 ring-slate-100 dark:ring-white/5 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                      className={`p-4 rounded-2xl ring-1 ${alarm.type === "CRITICAL" ? "bg-rose-50 dark:bg-rose-500/10 ring-rose-200 dark:ring-rose-500/30" : alarm.type === "SUCCESS" ? "bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 dark:ring-emerald-500/30" : "bg-slate-50 dark:bg-slate-800/40 ring-slate-100 dark:ring-white/5"}`}
                     >
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
                           {alarm.type === "WARNING" && (
                             <AlertTriangle
                               size={16}
-                              className="text-amber-500 dark:text-amber-400"
+                              className="text-amber-500"
                             />
                           )}
                           {alarm.type === "CRITICAL" && (
-                            <AlertOctagon
-                              size={16}
-                              className="text-rose-600 dark:text-rose-500"
-                            />
+                            <AlertOctagon size={16} className="text-rose-600" />
                           )}
                           {alarm.type === "INFO" && (
+                            <CheckCircle2 size={16} className="text-blue-500" />
+                          )}
+                          {alarm.type === "SUCCESS" && (
                             <CheckCircle2
                               size={16}
-                              className="text-emerald-500 dark:text-emerald-400"
+                              className="text-emerald-500"
                             />
                           )}
                           <span
-                            className={`text-xs font-bold tracking-wider ${alarm.type === "WARNING" ? "text-amber-600 dark:text-amber-400" : alarm.type === "CRITICAL" ? "text-rose-600 dark:text-rose-500" : "text-emerald-600 dark:text-emerald-400"}`}
+                            className={`text-xs font-bold tracking-wider ${alarm.type === "WARNING" ? "text-amber-600" : alarm.type === "CRITICAL" ? "text-rose-600" : alarm.type === "SUCCESS" ? "text-emerald-600" : "text-blue-600"}`}
                           >
                             {alarm.type}
                           </span>
                         </div>
-                        <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
+                        <span className="text-xs font-mono text-slate-400">
                           {alarm.time}
                         </span>
                       </div>
                       <p
-                        className={`text-sm leading-relaxed ${alarm.type === "CRITICAL" ? "text-rose-700 dark:text-rose-300 font-medium" : "text-slate-600 dark:text-slate-300"}`}
+                        className={`text-sm leading-relaxed ${alarm.type === "CRITICAL" ? "text-rose-700 font-medium" : alarm.type === "SUCCESS" ? "text-emerald-700 font-medium dark:text-emerald-400" : "text-slate-600 dark:text-slate-300"}`}
                       >
                         {alarm.message}
                       </p>
@@ -760,15 +772,7 @@ export default function UltimateDashboard() {
   );
 }
 
-function GradientCard({
-  title,
-  value,
-  unit,
-  icon,
-  color,
-  alert = false,
-  isDark,
-}: any) {
+function GradientCard({ title, value, unit, icon, color, alert = false }: any) {
   return (
     <div
       className={`relative overflow-hidden bg-white dark:bg-slate-900/50 backdrop-blur-md p-6 rounded-3xl border ${alert ? "border-rose-400 dark:border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.15)] dark:shadow-[0_0_20px_rgba(244,63,94,0.2)]" : "border-slate-200 dark:border-white/5"} shadow-sm hover:shadow-md dark:shadow-none group transition-all hover:-translate-y-1`}
