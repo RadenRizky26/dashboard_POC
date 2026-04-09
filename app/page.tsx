@@ -19,11 +19,10 @@ export default function FuzzyPIDDashboard() {
   const [isEStop, setIsEStop] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   
-  // Setpoints Menggunakan Rentang (Min & Max)
+  // Setpoints Menggunakan Rentang (Min & Max) untuk Suhu, dan Setpoint untuk RPM
   const [targetTempMin, setTargetTempMin] = useState<number>(38);
   const [targetTempMax, setTargetTempMax] = useState<number>(42);
-  const [targetRpmMin, setTargetRpmMin] = useState<number>(110);
-  const [targetRpmMax, setTargetRpmMax] = useState<number>(130);
+  const [targetRpm, setTargetRpm] = useState<number>(120);
   const TARGET_DAYS = 14; 
 
   const [batchId, setBatchId] = useState<string>("PRD-Kopi-01");
@@ -40,10 +39,6 @@ export default function FuzzyPIDDashboard() {
 
   useEffect(() => {
     setIsClient(true);
-    const initial = Array.from({ length: 20 }, (_, i) => ({
-      time: `10:${i < 10 ? "0" + i : i}`, temperature: 28 + Math.random() * 0.5, dimmer: 0, rpm: 0, days: 0,
-    }));
-    setTrendData(initial);
   }, []);
 
   const toggleEStop = () => {
@@ -60,7 +55,7 @@ export default function FuzzyPIDDashboard() {
     if (processState === "IDLE" || processState === "COMPLETED") {
       setProcessState("RUNNING");
       setMetrics(prev => ({ ...prev, days: 0 }));
-      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Sistem Aktif. Menjaga Suhu (${targetTempMin}-${targetTempMax}°C) & Motor (${targetRpmMin}-${targetRpmMax} RPM).` } as AlarmLog, ...prev].slice(0, 50));
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Sistem Aktif. Menjaga Suhu (${targetTempMin}-${targetTempMax}°C) & Motor (${targetRpm} RPM).` } as AlarmLog, ...prev].slice(0, 50));
     } else {
       setProcessState("IDLE");
       setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "WARNING", message: "Proses dihentikan manual oleh user." } as AlarmLog, ...prev].slice(0, 50));
@@ -81,8 +76,8 @@ export default function FuzzyPIDDashboard() {
   const exportToCSV = () => {
     const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
     if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
-    const headers = "Waktu,Suhu(C),Dimmer(%),RPM Aktual,Hari\n";
-    const csvData = dataToExport.map(row => `${row.time},${row.temperature.toFixed(2)},${row.dimmer.toFixed(0)},${row.rpm.toFixed(0)},${row.days.toFixed(1)}`).join("\n");
+    const headers = "Waktu;Suhu(C);Dimmer(%);RPM Aktual;Hari\n";
+    const csvData = dataToExport.map(row => `${row.time};${row.temperature.toFixed(2).replace('.', ',')};${row.dimmer.toFixed(0)};${row.rpm.toFixed(0)};${row.days.toFixed(1).replace('.', ',')}`).join("\n");
     const blob = new Blob([headers + csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -91,7 +86,7 @@ export default function FuzzyPIDDashboard() {
     a.click();
   };
 
-  // ==========================================
+  // ==========================================@
   // SIMULASI FUZZY HEATER & PID RPM (RENTANG)
   // ==========================================
   useEffect(() => {
@@ -103,8 +98,6 @@ export default function FuzzyPIDDashboard() {
         // Proteksi nilai terbalik
         const safeTempMin = Math.min(targetTempMin, targetTempMax);
         const safeTempMax = Math.max(targetTempMin, targetTempMax);
-        const safeRpmMin = Math.min(targetRpmMin, targetRpmMax);
-        const safeRpmMax = Math.max(targetRpmMin, targetRpmMax);
 
         if (isEStop) {
           dimmer = 0;
@@ -138,7 +131,7 @@ export default function FuzzyPIDDashboard() {
           temp += (heatAdded - heatLost);
           
           // 2. ANALOG PID RPM CONTROL 
-          let activeTargetRpm = (safeRpmMin + safeRpmMax) / 2; 
+          let activeTargetRpm = targetRpm; 
           let rpmError = activeTargetRpm - rpm;
           let Kp = 0.35; 
           let Kd = 0.70; 
@@ -148,13 +141,11 @@ export default function FuzzyPIDDashboard() {
           if (rpm < 0) { rpm = 0; rpmVelocity.current = 0; }
 
           // 3. TIMER FERMENTASI 
-          if (temp >= safeTempMin && temp <= safeTempMax) { 
-            days += 0.5; 
-            if (days >= TARGET_DAYS) {
-              days = TARGET_DAYS;
-              setProcessState("COMPLETED");
-              setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: "PROSES SELESAI: Target 14 Hari tercapai." } as AlarmLog, ...a].slice(0, 50));
-            }
+          days += 0.5; 
+          if (days >= TARGET_DAYS) {
+            days = TARGET_DAYS;
+            setProcessState("COMPLETED");
+            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: "PROSES SELESAI: Target 14 Hari tercapai." } as AlarmLog, ...a].slice(0, 50));
           }
 
           // Logging Periodik
@@ -175,10 +166,15 @@ export default function FuzzyPIDDashboard() {
         const newMetrics = { temp: +(temp.toFixed(2)), dimmer: +(dimmer.toFixed(1)), rpm: +(rpm.toFixed(1)), days };
 
         // PERBAIKAN: Update TrendData dengan aman di sini!
-        setTrendData(prevTrend => {
-          const nextData = [...prevTrend, { time: nowStr.slice(0, 5), temperature: newMetrics.temp, dimmer: newMetrics.dimmer, rpm: newMetrics.rpm, days: newMetrics.days }];
-          return nextData.length > 25 ? nextData.slice(1) : nextData;
-        });
+        const isRundown = newMetrics.rpm > 0 || newMetrics.dimmer > 0;
+        if (processState === "RUNNING" || isRundown) {
+          setTrendData(prevTrend => {
+            if (processState === "RUNNING" || prevTrend.length > 0) {
+              return [...prevTrend, { time: nowStr.slice(0, 5), temperature: newMetrics.temp, dimmer: newMetrics.dimmer, rpm: newMetrics.rpm, days: newMetrics.days }];
+            }
+            return prevTrend;
+          });
+        }
 
         return newMetrics;
       });
@@ -186,7 +182,7 @@ export default function FuzzyPIDDashboard() {
     }, 1500); 
 
     return () => clearInterval(interval);
-  }, [processState, isEStop, targetTempMin, targetTempMax, targetRpmMin, targetRpmMax]);
+  }, [processState, isEStop, targetTempMin, targetTempMax, targetRpm]);
 
   if (!isClient) return null;
 
@@ -208,7 +204,7 @@ export default function FuzzyPIDDashboard() {
             </div>
             <div>
               <h1 className="font-extrabold text-xl text-transparent bg-clip-text bg-gradient-to-r from-slate-800 to-slate-500 dark:from-white dark:to-slate-400 tracking-tight">
-                NEXUS <span className="font-light text-slate-400 dark:text-slate-500">Fuzzy-PID</span>
+                DASHBOARD <span className="font-light text-slate-400 dark:text-slate-500">Fuzzy-PID</span>
               </h1>
             </div>
           </div>
@@ -227,9 +223,22 @@ export default function FuzzyPIDDashboard() {
               <p className="text-slate-500 dark:text-slate-400 transition-colors">Monitoring Kontrol Fuzzy Logic & Analog PID berdasarkan Rentang (Band).</p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="bg-slate-100 dark:bg-slate-800/50 px-4 py-2.5 rounded-xl ring-1 ring-slate-200 dark:ring-white/5 flex flex-col">
-                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold block mb-0.5">Active Batch ID</span>
-                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">{batchId}</span>
+              <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/50 p-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/5">
+                <div className="px-2 flex flex-col">
+                  <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold block mb-0.5">Active Batch ID</span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">{batchId}</span>
+                </div>
+                <div className="flex space-x-1 border-l border-slate-300 dark:border-white/10 pl-2">
+                    <button onClick={startNewBatch} disabled={processState === "RUNNING"} className="text-xs font-bold bg-emerald-500 text-white px-3 py-2 rounded-lg hover:bg-emerald-400 disabled:opacity-50 transition-colors whitespace-nowrap">
+                        + Tambah
+                    </button>
+                    <button onClick={() => {
+                        const newId = prompt("Masukkan ID Batch Baru:", batchId);
+                        if (newId && newId.trim() !== "") setBatchId(newId.trim());
+                    }} disabled={processState === "RUNNING"} className="text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-3 py-2 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors whitespace-nowrap">
+                        ✎ Ganti
+                    </button>
+                </div>
               </div>
               <button onClick={toggleEStop} className={`p-3 px-8 rounded-xl font-black tracking-widest flex items-center gap-2 transition-all active:scale-95 ${isEStop ? "bg-rose-600 text-white shadow-[0_0_20px_rgba(225,29,72,0.4)] animate-pulse" : "bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-500 ring-1 ring-rose-500/50 hover:bg-rose-600 hover:text-white"}`}>
                 <AlertOctagon size={20} /> {isEStop ? "RESET E-STOP" : "E-STOP"}
@@ -263,11 +272,9 @@ export default function FuzzyPIDDashboard() {
                 <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 flex-1">
                   <Settings2 size={20} className="text-purple-500" />
                   <div className="flex flex-col w-full">
-                    <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Rentang Motor (RPM)</span>
+                    <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Setpoint Motor (RPM)</span>
                     <div className="flex items-center gap-2 mt-1">
-                      <input type="number" value={targetRpmMin} onChange={(e) => setTargetRpmMin(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-16 bg-transparent border-b border-slate-300 dark:border-slate-600 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50" />
-                      <span className="text-slate-400 font-bold">-</span>
-                      <input type="number" value={targetRpmMax} onChange={(e) => setTargetRpmMax(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-16 bg-transparent border-b border-slate-300 dark:border-slate-600 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50" />
+                      <input type="number" value={targetRpm} onChange={(e) => setTargetRpm(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-24 bg-transparent border-b border-slate-300 dark:border-slate-600 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50" />
                     </div>
                   </div>
                 </div>
@@ -288,7 +295,7 @@ export default function FuzzyPIDDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <GradientCard title="Suhu Aktual (PV)" value={metrics.temp.toFixed(1)} unit="°C" icon={<Thermometer size={24} />} color="from-orange-400 to-orange-600 dark:from-orange-500 dark:to-red-600" alert={metrics.temp > targetTempMax + 5} />
                 <GradientCard title="Dimmer Heater" value={metrics.dimmer.toFixed(0)} unit="%" icon={<Zap size={24} />} color="from-yellow-400 to-amber-600 dark:from-yellow-500 dark:to-orange-600" />
-                <GradientCard title="Kecepatan (PV)" value={metrics.rpm.toFixed(0)} unit="RPM" icon={<Gauge size={24} />} color="from-purple-500 to-purple-700 dark:from-indigo-500 dark:to-purple-600" alert={metrics.rpm > targetRpmMax + 20} />
+                <GradientCard title="Kecepatan (PV)" value={metrics.rpm.toFixed(0)} unit="RPM" icon={<Gauge size={24} />} color="from-purple-500 to-purple-700 dark:from-indigo-500 dark:to-purple-600" alert={metrics.rpm > targetRpm + 20} />
                 <GradientCard title="Waktu Proses" value={Math.floor(metrics.days)} unit={`/ ${TARGET_DAYS} Hari`} icon={<Clock size={24} />} color="from-blue-400 to-blue-600 dark:from-blue-500 dark:to-cyan-600" />
               </div>
 
@@ -313,8 +320,8 @@ export default function FuzzyPIDDashboard() {
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
                         
                         <ReferenceArea yAxisId="left" y1={targetTempMin} y2={targetTempMax} fill="#f97316" fillOpacity={0.15} />
-                        <ReferenceLine yAxisId="left" y={targetTempMax} stroke="#f97316" strokeDasharray="3 3" opacity={0.5} />
-                        <ReferenceLine yAxisId="left" y={targetTempMin} stroke="#f97316" strokeDasharray="3 3" opacity={0.5} />
+                        <ReferenceLine yAxisId="left" y={targetTempMax} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "MAX", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
+                        <ReferenceLine yAxisId="left" y={targetTempMin} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideBottomLeft", value: "MIN", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
                         
                         <Area yAxisId="left" type="monotone" dataKey="temperature" name="Suhu (PV)" stroke="#f97316" strokeWidth={3} fill="url(#colorTemp)" isAnimationActive={false} />
                         <Area yAxisId="right" type="stepAfter" dataKey="dimmer" name="Dimmer (%)" stroke="#eab308" strokeWidth={2} fill="url(#colorDimmer)" isAnimationActive={false} />
@@ -338,9 +345,7 @@ export default function FuzzyPIDDashboard() {
                         <YAxis stroke="#a855f7" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 'dataMax + 50']} />
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
                         
-                        <ReferenceArea y1={targetRpmMin} y2={targetRpmMax} fill="#a855f7" fillOpacity={0.15} />
-                        <ReferenceLine y={targetRpmMax} stroke="#a855f7" strokeDasharray="3 3" opacity={0.5} />
-                        <ReferenceLine y={targetRpmMin} stroke="#a855f7" strokeDasharray="3 3" opacity={0.5} />
+                        <ReferenceLine y={targetRpm} stroke="#9333ea" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "SETPOINT", fill: "#9333ea", fontSize: 10, fontWeight: "bold" }} />
                         
                         <Line type="monotone" dataKey="rpm" name="RPM (PV)" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} isAnimationActive={false} />
                       </ComposedChart>
