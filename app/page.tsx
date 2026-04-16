@@ -73,16 +73,29 @@ export default function FuzzyPIDDashboard() {
     setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Batch baru dimulai: ${newId}.` } as AlarmLog, ...prev].slice(0, 50));
   };
 
-  const exportToCSV = () => {
+  const exportThermalCSV = () => {
     const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
     if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
-    const headers = "Waktu;Suhu(C);Set Point Suhu;Dimmer(%);RPM Aktual;Set Point RPM;Hari\n";
-    const csvData = dataToExport.map(row => `${row.time};${row.temperature.toFixed(2).replace('.', ',')};${row.setPointTemp || `${targetTempMin}-${targetTempMax}`};${row.dimmer.toFixed(0)};${row.rpm.toFixed(0)};${row.setPointRpm || targetRpm};${row.days.toFixed(1).replace('.', ',')}`).join("\n");
+    const headers = "Suhu(C);Set Point Suhu;PWM Heater;Waktu\n";
+    const csvData = dataToExport.map(row => `${row.temperature.toFixed(2).replace('.', ',')};${row.setPointTemp || `${targetTempMin}-${targetTempMax}`};${row.dimmer.toFixed(0)};${row.time}`).join("\n");
     const blob = new Blob([headers + csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Log_Proses_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
+    a.download = `Log_Thermal_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
+    a.click();
+  };
+
+  const exportMotorCSV = () => {
+    const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
+    if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
+    const headers = "RPM Aktual;Set Point RPM;Waktu\n";
+    const csvData = dataToExport.map(row => `${row.rpm.toFixed(0)};${row.setPointRpm || targetRpm};${row.time}`).join("\n");
+    const blob = new Blob([headers + csvData], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Log_Motor_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
     a.click();
   };
 
@@ -171,7 +184,7 @@ export default function FuzzyPIDDashboard() {
           setTrendData(prevTrend => {
             if (processState === "RUNNING" || prevTrend.length > 0) {
               return [...prevTrend, { 
-                time: nowStr.slice(0, 5), 
+                time: nowStr, 
                 temperature: newMetrics.temp, 
                 dimmer: newMetrics.dimmer, 
                 rpm: newMetrics.rpm, 
@@ -302,7 +315,7 @@ export default function FuzzyPIDDashboard() {
               {/* KPI Grid */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <GradientCard title="Suhu Aktual (PV)" value={metrics.temp.toFixed(1)} unit="°C" icon={<Thermometer size={24} />} color="from-orange-400 to-orange-600 dark:from-orange-500 dark:to-red-600" alert={metrics.temp > targetTempMax + 5} />
-                <GradientCard title="Dimmer Heater" value={metrics.dimmer.toFixed(0)} unit="%" icon={<Zap size={24} />} color="from-yellow-400 to-amber-600 dark:from-yellow-500 dark:to-orange-600" />
+                <GradientCard title="PWM Heater" value={metrics.dimmer.toFixed(0)} unit="%" icon={<Zap size={24} />} color="from-yellow-400 to-amber-600 dark:from-yellow-500 dark:to-orange-600" />
                 <GradientCard title="Kecepatan (PV)" value={metrics.rpm.toFixed(0)} unit="RPM" icon={<Gauge size={24} />} color="from-purple-500 to-purple-700 dark:from-indigo-500 dark:to-purple-600" alert={metrics.rpm > targetRpm + 20} />
                 <GradientCard title="Waktu Proses" value={Math.floor(metrics.days)} unit={`/ ${TARGET_DAYS} Hari`} icon={<Clock size={24} />} color="from-blue-400 to-blue-600 dark:from-blue-500 dark:to-cyan-600" />
               </div>
@@ -332,7 +345,7 @@ export default function FuzzyPIDDashboard() {
                         <ReferenceLine yAxisId="left" y={targetTempMin} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideBottomLeft", value: "MIN", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
                         
                         <Area yAxisId="left" type="monotone" dataKey="temperature" name="Suhu (PV)" stroke="#f97316" strokeWidth={3} fill="url(#colorTemp)" isAnimationActive={false} />
-                        <Area yAxisId="right" type="stepAfter" dataKey="dimmer" name="Dimmer (%)" stroke="#eab308" strokeWidth={2} fill="url(#colorDimmer)" isAnimationActive={false} />
+                        <Area yAxisId="right" type="stepAfter" dataKey="dimmer" name="PWM Heater" stroke="#eab308" strokeWidth={2} fill="url(#colorDimmer)" isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
@@ -380,7 +393,7 @@ export default function FuzzyPIDDashboard() {
                         <option value="current">🟢 Current ({batchId})</option>
                         {pastBatches.map(b => (<option key={b.id} value={b.id}>📁 History ({b.id})</option>))}
                       </select>
-                      <button onClick={exportToCSV} className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl hover:bg-emerald-100 transition font-bold text-emerald-600"><Download size={14} /> CSV</button>
+                      <button onClick={exportThermalCSV} className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl hover:bg-emerald-100 transition font-bold text-emerald-600"><Download size={14} /> CSV Thermal</button>
                     </div>
                   </div>
                   <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl relative">
@@ -389,8 +402,8 @@ export default function FuzzyPIDDashboard() {
                         <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs">
                           <th className="p-3 font-semibold">Suhu (°C)</th>
                           <th className="p-3 font-semibold">Set Point</th>
+                          <th className="p-3 font-semibold">PWM Heater</th>
                           <th className="p-3 font-semibold">Waktu</th>
-                          <th className="p-3 font-semibold">Dimmer (%)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -398,8 +411,8 @@ export default function FuzzyPIDDashboard() {
                           <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm">
                             <td className="p-3">{row.temperature.toFixed(2)}</td>
                             <td className="p-3 font-mono text-xs">{row.setPointTemp || `${targetTempMin}-${targetTempMax}`}</td>
-                            <td className="p-3 font-mono text-xs">{row.time}</td>
                             <td className="p-3">{row.dimmer.toFixed(0)}</td>
+                            <td className="p-3 font-mono text-xs">{row.time}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -409,7 +422,10 @@ export default function FuzzyPIDDashboard() {
 
                 {/* Tabel 2: Motor Control */}
                 <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[400px]">
-                  <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2"><Gauge size={20} className="text-purple-500" /> Log Motor Control</h3>
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2"><Gauge size={20} className="text-purple-500" /> Log Motor Control</h3>
+                    <button onClick={exportMotorCSV} className="text-xs flex items-center gap-1 bg-purple-50 dark:bg-purple-500/20 px-4 py-2 rounded-xl hover:bg-purple-100 transition font-bold text-purple-600"><Download size={14} /> CSV Motor</button>
+                  </div>
                   <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl relative">
                     <table className="w-full text-left border-collapse min-w-[280px]">
                       <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
