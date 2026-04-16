@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
-import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from "recharts";
+import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, Legend } from "recharts";
 import { AlertTriangle, CheckCircle2, Activity, Database, Clock, Zap, Thermometer, Gauge, ShieldAlert, Settings2, Sun, Moon, Wifi, FlaskConical, Download, AlertOctagon, SlidersHorizontal, ClipboardList, TableProperties, Power, CalendarCheck } from "lucide-react";
 
 // --- Types ---
@@ -329,23 +329,24 @@ export default function FuzzyPIDDashboard() {
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Monitoring intervensi AC Dimmer menjaga suhu di dalam kotak target.</p>
                   <div className="h-[280px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={trendData}>
+                      <ComposedChart data={trendData} margin={{ bottom: 20 }}>
                         <defs>
                           <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3} /><stop offset="95%" stopColor="#f97316" stopOpacity={0} /></linearGradient>
-                          <linearGradient id="colorDimmer" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#eab308" stopOpacity={0.3} /><stop offset="95%" stopColor="#eab308" stopOpacity={0} /></linearGradient>
+                          <linearGradient id="colorDimmer" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} /><stop offset="95%" stopColor="#ef4444" stopOpacity={0} /></linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
                         <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} />
                         <YAxis yAxisId="left" stroke="#f97316" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[25, 50]} />
-                        <YAxis yAxisId="right" orientation="right" stroke="#eab308" fontSize={10} tickLine={false} axisLine={false} dx={10} domain={[0, 100]} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#ef4444" fontSize={10} tickLine={false} axisLine={false} dx={10} domain={[0, 100]} />
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
+                        <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
                         
                         <ReferenceArea yAxisId="left" y1={targetTempMin} y2={targetTempMax} fill="#f97316" fillOpacity={0.15} />
                         <ReferenceLine yAxisId="left" y={targetTempMax} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "MAX", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
                         <ReferenceLine yAxisId="left" y={targetTempMin} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideBottomLeft", value: "MIN", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
                         
                         <Area yAxisId="left" type="monotone" dataKey="temperature" name="Suhu (PV)" stroke="#f97316" strokeWidth={3} fill="url(#colorTemp)" isAnimationActive={false} />
-                        <Area yAxisId="right" type="stepAfter" dataKey="dimmer" name="PWM Heater" stroke="#eab308" strokeWidth={2} fill="url(#colorDimmer)" isAnimationActive={false} />
+                        <Area yAxisId="right" type="monotone" dataKey="dimmer" name="PWM Heater" stroke="#ef4444" strokeWidth={2} fill="url(#colorDimmer)" isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
@@ -357,7 +358,7 @@ export default function FuzzyPIDDashboard() {
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Kurva osilasi (Damped Sine Wave) menuju zona rata-rata RPM.</p>
                   <div className="h-[280px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={trendData}>
+                      <ComposedChart data={trendData} margin={{ bottom: 20 }}>
                         <defs>
                           <linearGradient id="colorRpm" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a855f7" stopOpacity={0.3} /><stop offset="95%" stopColor="#a855f7" stopOpacity={0} /></linearGradient>
                         </defs>
@@ -365,6 +366,7 @@ export default function FuzzyPIDDashboard() {
                         <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} />
                         <YAxis stroke="#a855f7" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 'dataMax + 50']} />
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
+                        <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
                         
                         <ReferenceLine y={targetRpm} stroke="#9333ea" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "SETPOINT", fill: "#9333ea", fontSize: 10, fontWeight: "bold" }} />
                         
