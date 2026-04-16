@@ -319,7 +319,7 @@ export default function CascaraOvenDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <GradientCard title="Suhu Ruang Oven" value={metrics.roomTemp.toFixed(1)} unit="°C" icon={<Thermometer size={24} />} color="from-orange-400 to-red-500" statusColor={getTrafficLight(metrics.roomTemp, true)} />
                 <GradientCard title="Suhu Pemanas" value={metrics.heaterTemp.toFixed(1)} unit="°C" icon={<Zap size={24} />} color="from-yellow-400 to-amber-600" statusColor={getTrafficLight(metrics.heaterTemp, false)} />
-                <GradientCard title="Kadar Air Aktual" value={metrics.humidity.toFixed(1)} unit="%" icon={<Droplets size={24} />} color="from-blue-400 to-cyan-500" alert={metrics.humidity <= targetHumidity && processState === "COMPLETED"} />
+                <GradientCard title="Kelembapan Ruang Oven" value={metrics.humidity.toFixed(1)} unit="%" icon={<Droplets size={24} />} color="from-blue-400 to-cyan-500" alert={metrics.humidity <= targetHumidity && processState === "COMPLETED"} />
                 <GradientCard title="Waktu Berjalan" value={formattedTimer} unit="" icon={<Clock size={24} />} color="from-purple-500 to-indigo-500" isTimer={true} />
               </div>
 
