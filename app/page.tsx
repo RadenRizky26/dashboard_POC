@@ -4,7 +4,7 @@ import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Respon
 import { AlertTriangle, CheckCircle2, Activity, Database, Clock, Zap, Thermometer, Gauge, ShieldAlert, Settings2, Sun, Moon, Wifi, FlaskConical, Download, AlertOctagon, SlidersHorizontal, ClipboardList, TableProperties, Power, CalendarCheck } from "lucide-react";
 
 // --- Types ---
-interface ProcessData { time: string; temperature: number; dimmer: number; rpm: number; days: number; }
+interface ProcessData { time: string; temperature: number; dimmer: number; rpm: number; days: number; setPointTemp?: string; setPointRpm?: number; }
 interface AlarmLog { id: string; time: string; type: "WARNING" | "INFO" | "CRITICAL" | "SUCCESS"; message: string; }
 interface BatchHistory { id: string; data: ProcessData[]; }
 
@@ -76,8 +76,8 @@ export default function FuzzyPIDDashboard() {
   const exportToCSV = () => {
     const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
     if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
-    const headers = "Waktu;Suhu(C);Dimmer(%);RPM Aktual;Hari\n";
-    const csvData = dataToExport.map(row => `${row.time};${row.temperature.toFixed(2).replace('.', ',')};${row.dimmer.toFixed(0)};${row.rpm.toFixed(0)};${row.days.toFixed(1).replace('.', ',')}`).join("\n");
+    const headers = "Waktu;Suhu(C);Set Point Suhu;Dimmer(%);RPM Aktual;Set Point RPM;Hari\n";
+    const csvData = dataToExport.map(row => `${row.time};${row.temperature.toFixed(2).replace('.', ',')};${row.setPointTemp || `${targetTempMin}-${targetTempMax}`};${row.dimmer.toFixed(0)};${row.rpm.toFixed(0)};${row.setPointRpm || targetRpm};${row.days.toFixed(1).replace('.', ',')}`).join("\n");
     const blob = new Blob([headers + csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -170,7 +170,15 @@ export default function FuzzyPIDDashboard() {
         if (processState === "RUNNING" || isRundown) {
           setTrendData(prevTrend => {
             if (processState === "RUNNING" || prevTrend.length > 0) {
-              return [...prevTrend, { time: nowStr.slice(0, 5), temperature: newMetrics.temp, dimmer: newMetrics.dimmer, rpm: newMetrics.rpm, days: newMetrics.days }];
+              return [...prevTrend, { 
+                time: nowStr.slice(0, 5), 
+                temperature: newMetrics.temp, 
+                dimmer: newMetrics.dimmer, 
+                rpm: newMetrics.rpm, 
+                days: newMetrics.days,
+                setPointTemp: `${targetTempMin}-${targetTempMax}`,
+                setPointRpm: targetRpm
+              }];
             }
             return prevTrend;
           });
@@ -361,47 +369,76 @@ export default function FuzzyPIDDashboard() {
           {activeTab === "logs" && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-500">
               
-              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[600px]">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2"><TableProperties size={20} className="text-blue-500" /> Historis Sensor</h3>
-                  <div className="flex gap-2 items-center">
-                    <select value={viewingBatchId} onChange={(e) => setViewingBatchId(e.target.value)} className="text-xs bg-slate-50 dark:bg-slate-800/80 px-3 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/10 outline-none text-slate-700 dark:text-slate-300 font-bold cursor-pointer">
-                      <option value="current">🟢 Current ({batchId})</option>
-                      {pastBatches.map(b => (<option key={b.id} value={b.id}>📁 History ({b.id})</option>))}
-                    </select>
-                    <button onClick={exportToCSV} className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl hover:bg-emerald-100 transition font-bold text-emerald-600"><Download size={14} /> CSV</button>
+              <div className="flex flex-col gap-6">
+                
+                {/* Tabel 1: Thermal Control */}
+                <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[400px]">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2"><Thermometer size={20} className="text-orange-500" /> Log Thermal Control</h3>
+                    <div className="flex gap-2 items-center">
+                      <select value={viewingBatchId} onChange={(e) => setViewingBatchId(e.target.value)} className="text-xs bg-slate-50 dark:bg-slate-800/80 px-3 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/10 outline-none text-slate-700 dark:text-slate-300 font-bold cursor-pointer">
+                        <option value="current">🟢 Current ({batchId})</option>
+                        {pastBatches.map(b => (<option key={b.id} value={b.id}>📁 History ({b.id})</option>))}
+                      </select>
+                      <button onClick={exportToCSV} className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl hover:bg-emerald-100 transition font-bold text-emerald-600"><Download size={14} /> CSV</button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl relative">
+                    <table className="w-full text-left border-collapse min-w-[340px]">
+                      <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
+                        <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs">
+                          <th className="p-3 font-semibold">Suhu (°C)</th>
+                          <th className="p-3 font-semibold">Set Point</th>
+                          <th className="p-3 font-semibold">Waktu</th>
+                          <th className="p-3 font-semibold">Dimmer (%)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...displayTableData].reverse().map((row, i) => (
+                          <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm">
+                            <td className="p-3">{row.temperature.toFixed(2)}</td>
+                            <td className="p-3 font-mono text-xs">{row.setPointTemp || `${targetTempMin}-${targetTempMax}`}</td>
+                            <td className="p-3 font-mono text-xs">{row.time}</td>
+                            <td className="p-3">{row.dimmer.toFixed(0)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-                <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl">
-                  <table className="w-full text-left border-collapse">
-                    <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
-                      <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">
-                        <th className="p-4 font-semibold">Waktu</th>
-                        <th className="p-4 font-semibold">Suhu (°C)</th>
-                        <th className="p-4 font-semibold">RPM</th>
-                        <th className="p-4 font-semibold">Dimmer (%)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...displayTableData].reverse().map((row, i) => (
-                        <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm">
-                          <td className="p-4 font-mono">{row.time}</td>
-                          <td className="p-4">{row.temperature.toFixed(2)}</td>
-                          <td className="p-4">{row.rpm.toFixed(0)}</td>
-                          <td className="p-4">{row.dimmer.toFixed(0)}</td>
+
+                {/* Tabel 2: Motor Control */}
+                <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[400px]">
+                  <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2"><Gauge size={20} className="text-purple-500" /> Log Motor Control</h3>
+                  <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl relative">
+                    <table className="w-full text-left border-collapse min-w-[280px]">
+                      <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
+                        <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs">
+                          <th className="p-3 font-semibold">RPM</th>
+                          <th className="p-3 font-semibold">Set Point</th>
+                          <th className="p-3 font-semibold">Waktu</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {[...displayTableData].reverse().map((row, i) => (
+                          <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm">
+                            <td className="p-3">{row.rpm.toFixed(0)}</td>
+                            <td className="p-3 font-mono text-xs">{row.setPointRpm || targetRpm}</td>
+                            <td className="p-3 font-mono text-xs">{row.time}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[600px]">
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-full lg:h-[824px]">
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2"><ShieldAlert size={20} className={isEStop ? "text-rose-500 animate-pulse" : "text-emerald-500"} /> System & Fuzzy Logs</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Log intervensi kontrol & Diagram Alir K3.</p>
                 <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                  {alarms.map((alarm) => (
-                    <div key={alarm.id} className={`p-4 rounded-2xl ring-1 ${alarm.type === "CRITICAL" ? "bg-rose-50 dark:bg-rose-500/10 ring-rose-200 dark:ring-rose-500/30" : alarm.type === "SUCCESS" ? "bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 dark:ring-emerald-500/30" : "bg-slate-50 dark:bg-slate-800/40 ring-slate-100 dark:ring-white/5"}`}>
+                  {alarms.map((alarm, index) => (
+                    <div key={`${alarm.id}-${index}`} className={`p-4 rounded-2xl ring-1 ${alarm.type === "CRITICAL" ? "bg-rose-50 dark:bg-rose-500/10 ring-rose-200 dark:ring-rose-500/30" : alarm.type === "SUCCESS" ? "bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 dark:ring-emerald-500/30" : "bg-slate-50 dark:bg-slate-800/40 ring-slate-100 dark:ring-white/5"}`}>
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
                           <span className={`text-xs font-bold tracking-wider ${alarm.type === "WARNING" ? "text-amber-600" : alarm.type === "CRITICAL" ? "text-rose-600" : alarm.type === "SUCCESS" ? "text-emerald-600" : "text-blue-600"}`}>{alarm.type}</span>
