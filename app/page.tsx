@@ -16,7 +16,7 @@ export default function FuzzyPIDDashboard() {
   const [activeTab, setActiveTab] = useState<"control" | "logs">("control");
 
   const [processState, setProcessState] = useState<ProcessState>("IDLE");
-  const [isEStop, setIsEStop] = useState(false);
+  const [isEStop, setIsEStop] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
   
   // Setpoints Menggunakan Rentang (Min & Max) untuk Suhu, dan Setpoint untuk RPM
