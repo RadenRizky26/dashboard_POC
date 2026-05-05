@@ -8,7 +8,6 @@ from firebase_admin import credentials, db
 app = Flask(__name__)
 CORS(app)
 
-# --- INISIALISASI FIREBASE ---
 def initialize_firebase():
     if not firebase_admin._apps:
         firebase_key_env = os.environ.get('FIREBASE_KEY')
@@ -31,31 +30,25 @@ def get_data():
     try:
         ref = db.reference('data_POC')
         db_data = ref.get()
-        
-        if not db_data:
-            return jsonify({"status": "error", "message": "Firebase Empty"}), 404
+        if not db_data: 
+            return jsonify({"status": "error", "message": "Firebase kosong"}), 404
 
-        # Mengambil data asli dari alat (Tanpa Verifikasi Python)
         slave = db_data.get('slave', {})
         master = db_data.get('master', {})
-
+        
         return jsonify({
             "status": "success",
             "data": {
                 "slave": {
                     "suhu": slave.get('suhu', 0.0),
-                    "ph": slave.get('ph', 0.0),
-                    "heaterPower": slave.get('heaterPower', 0.0),
-                    "heaterOn": slave.get('heaterOn', False)
+                    "heaterPower": slave.get('heaterPower', 0.0)
                 },
                 "master": {
                     "rpm": master.get('rpm', 0.0),
-                    "motorPower": master.get('motorPower', 0.0),
-                    "motorOn": master.get('motorOn', False)
+                    "motorPower": master.get('motorPower', 0.0)
                 }
             }
         }), 200
-
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

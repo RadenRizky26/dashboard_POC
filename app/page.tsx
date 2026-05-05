@@ -1,182 +1,232 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { Activity, Thermometer, Gauge, Zap, Download, Power, Moon, Sun, ClipboardList, SlidersHorizontal } from "lucide-react";
+import { 
+  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, 
+  Tooltip, ResponsiveContainer, Legend 
+} from "recharts";
+import { 
+  Activity, Clock, Zap, Thermometer, Gauge, 
+  Sun, Moon, Download, Power, CheckCircle2,
+  SlidersHorizontal, ClipboardList, ShieldCheck
+} from "lucide-react";
 
-// --- Interface Data ---
+// --- Types ---
 interface ProcessData { 
   time: string; 
   suhu: number; 
-  h_pwr: number; // Slave
-  rpm: number;   // Master
-  m_pwr: number; // Master
+  pwr_heater_mikro: number; 
+  pwr_heater_python: number;
+  rpm_mikro: number;
+  rpm_python: number;
 }
 
-export default function CloudMonitorDashboard() {
+interface AlarmLog { id: string; time: string; type: string; message: string; }
+
+export default function IndustrialInformaticsDashboard() {
   const [isClient, setIsClient] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState<"control" | "logs">("control");
   const [processState, setProcessState] = useState<"IDLE" | "RUNNING">("IDLE");
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
-  const [metrics, setMetrics] = useState({ suhu: 0, h_pwr: 0, rpm: 0, m_pwr: 0 });
+  
+  const [metrics, setMetrics] = useState({ 
+    suhu: 0, pwr_heater_mikro: 0, pwr_heater_python: 0, 
+    rpm_mikro: 0, rpm_python: 0 
+  });
+
+  const [alarms, setAlarms] = useState<AlarmLog[]>([
+    { id: "1", time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Dashboard Terhubung ke API Python Cloud. Menunggu data..." }
+  ]);
 
   useEffect(() => { setIsClient(true); }, []);
 
-  // Fetch Data dari API Relay
+  // ==========================================
+  // FETCH DATA DARI API PYTHON (VERSI CLOUD)
+  // ==========================================
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await fetch('/api/index');
-        const r = await res.json();
-        if (r.status === "success" && r.data) {
-          const d = r.data;
-          const now = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-          
-          const cur = {
-            suhu: d.slave?.suhu || 0,
-            h_pwr: d.slave?.heaterPower || 0,
-            rpm: d.master?.rpm || 0,
-            m_pwr: d.master?.motorPower || 0
+        const response = await fetch('/api/index'); 
+        const result = await response.json();
+
+        if (result.status === "success" && result.data) {
+          const cloud = result.data;
+          const nowStr = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+          // Mapping data sesuai struktur Master/Slave & Verifikasi Python
+          const currentMetrics = {
+            suhu: cloud.slave?.suhu || 0,
+            pwr_heater_mikro: cloud.slave?.heaterPower || 0,
+            pwr_heater_python: cloud.verifikasi?.heater_python || 0,
+            rpm_mikro: cloud.master?.rpm || 0,
+            rpm_python: cloud.verifikasi?.rpm_python || 0
           };
 
-          setMetrics(cur);
+          setMetrics(currentMetrics);
+
           if (processState === "RUNNING") {
-            setTrendData(prev => [...prev, { time: now, ...cur }].slice(-50));
+            setTrendData(prev => [...prev, { time: nowStr, ...currentMetrics }].slice(-50));
           }
         }
-      } catch (e) { console.error("Fetch Error:", e); }
+      } catch (error) { 
+        console.error("Fetch Error:", error); 
+      }
     };
-    const itv = setInterval(fetchData, 2000);
-    return () => clearInterval(itv);
+
+    const interval = setInterval(fetchData, 2000); // Polling setiap 2 detik
+    return () => clearInterval(interval);
   }, [processState]);
 
-  // --- Fungsi Export CSV Terpisah ---
-  const downloadCSV = (content: string, filename: string) => {
+  // ==========================================
+  // FUNGSI EKSPOR CSV TERPISAH
+  // ==========================================
+  const exportThermalCSV = () => {
+    if (trendData.length === 0) return alert("Belum ada data.");
+    const headers = "Waktu;Suhu(C);Heater_Mikro(%);Heater_Python(%)\n";
+    const body = trendData.map(r => `${r.time};${r.suhu};${r.pwr_heater_mikro};${r.pwr_heater_python}`).join("\n");
+    downloadFile(headers + body, "Log_Slave_Thermal.csv");
+  };
+
+  const exportMotorCSV = () => {
+    if (trendData.length === 0) return alert("Belum ada data.");
+    const headers = "Waktu;RPM_Mikro;RPM_Python\n";
+    const body = trendData.map(r => `${r.time};${r.rpm_mikro};${r.rpm_python}`).join("\n");
+    downloadFile(headers + body, "Log_Master_Motor.csv");
+  };
+
+  const downloadFile = (content: string, fileName: string) => {
     const blob = new Blob([content], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
+    const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = filename; a.click();
-  };
-
-  const exportSlaveCSV = () => {
-    const head = "Waktu;Suhu(C);HeaterPower(%)\n";
-    const body = trendData.map(r => `${r.time};${r.suhu};${r.h_pwr}`).join("\n");
-    downloadCSV(head + body, "Log_Slave_Thermal.csv");
-  };
-
-  const exportMasterCSV = () => {
-    const head = "Waktu;RPM;MotorPower(%)\n";
-    const body = trendData.map(r => `${r.time};${r.rpm};${r.m_pwr}`).join("\n");
-    downloadCSV(head + body, "Log_Master_Motor.csv");
+    a.href = url; a.download = fileName; a.click();
   };
 
   if (!isClient) return null;
 
   return (
     <div className={isDarkMode ? "dark" : ""}>
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0a0f1c] text-slate-800 dark:text-slate-200 transition-colors">
+      <div className="min-h-screen bg-slate-50 dark:bg-[#0a0f1c] text-slate-800 dark:text-slate-200 transition-colors duration-500 pb-10">
         
-        {/* Header Nav */}
-        <nav className="p-6 border-b dark:border-white/5 flex justify-between items-center bg-white/50 dark:bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
-          <div className="flex items-center gap-3">
-            <div className="bg-emerald-500 p-2 rounded-lg text-white"><Activity size={20}/></div>
-            <h1 className="font-black uppercase tracking-tighter text-lg">Polman <span className="font-light opacity-50">Informatics</span></h1>
-          </div>
+        {/* Navigation */}
+        <nav className="sticky top-0 z-50 bg-white/70 dark:bg-slate-950/50 backdrop-blur-xl border-b border-slate-200 dark:border-white/5 px-8 py-4 flex justify-between items-center shadow-sm">
           <div className="flex items-center gap-4">
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 bg-slate-200 dark:bg-slate-800 rounded-lg">
-              {isDarkMode ? <Sun size={18}/> : <Moon size={18}/>}
-            </button>
-            <button onClick={() => setProcessState(processState === "IDLE" ? "RUNNING" : "IDLE")} className={`px-6 py-2 rounded-xl font-bold text-sm ${processState === "IDLE" ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"}`}>
-              {processState === "IDLE" ? "START MONITOR" : "STOP MONITOR"}
-            </button>
+            <div className="bg-emerald-500 p-2.5 rounded-xl shadow-lg"><Activity size={24} className="text-white" /></div>
+            <h1 className="font-extrabold text-xl uppercase tracking-tighter">
+              Industrial <span className="font-light text-slate-500">Informatics</span>
+            </h1>
           </div>
+          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 ring-1 ring-slate-200 dark:ring-white/5">
+            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
         </nav>
 
-        <main className="p-8 max-w-[1400px] mx-auto">
-          {/* Dashboard Summary */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <StatCard t="Suhu Slave" v={metrics.suhu.toFixed(1)} u="°C" c="text-orange-500" i={<Thermometer/>}/>
-            <StatCard t="Power Heater" v={metrics.h_pwr} u="%" c="text-red-500" i={<Zap/>}/>
-            <StatCard t="RPM Master" v={metrics.rpm} u="RPM" c="text-indigo-500" i={<Gauge/>}/>
-            <StatCard t="Power Motor" v={metrics.m_pwr} u="%" c="text-purple-500" i={<Zap/>}/>
+        <main className="p-8 max-w-[1600px] mx-auto">
+          {/* Dashboard Header */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 border-b border-slate-200 dark:border-white/10 pb-6">
+            <div>
+              <h2 className="text-3xl font-bold uppercase tracking-tight">System <span className="text-emerald-500">Verification</span></h2>
+              <p className="text-slate-500 dark:text-slate-400 font-medium">Monitoring Real-time Master (Motor) & Slave (Thermal) via Cloud Analysis.</p>
+            </div>
+            <button 
+              onClick={() => setProcessState(processState === "IDLE" ? "RUNNING" : "IDLE")} 
+              className={`px-10 py-4 rounded-2xl font-black transition-all shadow-lg active:scale-95 ${
+                processState === "IDLE" ? "bg-emerald-500 text-white shadow-emerald-500/20" : "bg-rose-500 text-white shadow-rose-500/20"
+              }`}
+            >
+              <Power size={20} className="inline mr-2"/> {processState === "IDLE" ? "START MONITOR" : "STOP MONITOR"}
+            </button>
           </div>
 
-          {/* Tab Menu */}
-          <div className="flex gap-6 mb-6 border-b dark:border-white/10">
-            <button onClick={() => setActiveTab("control")} className={`pb-4 font-bold text-sm ${activeTab === "control" ? "text-emerald-500 border-b-2 border-emerald-500" : "opacity-50"}`}>VISUALIZATION</button>
-            <button onClick={() => setActiveTab("logs")} className={`pb-4 font-bold text-sm ${activeTab === "logs" ? "text-emerald-500 border-b-2 border-emerald-500" : "opacity-50"}`}>DATA LOGS</button>
+          <div className="flex gap-2 mb-8 border-b border-slate-200 dark:border-slate-800">
+            <button onClick={() => setActiveTab("control")} className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "control" ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500"}`}><SlidersHorizontal size={18} /> Visual Panel</button>
+            <button onClick={() => setActiveTab("logs")} className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "logs" ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500"}`}><ClipboardList size={18} /> Data History</button>
           </div>
 
           {activeTab === "control" && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in duration-500">
-              {/* KIRI: THERMAL ANALYSIS */}
-              <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border dark:border-white/5">
-                <h3 className="font-bold mb-4 uppercase text-xs tracking-widest text-orange-500">Left: Thermal Analysis (Slave)</h3>
-                <div className="h-[300px]">
-                  <ResponsiveContainer>
-                    <ComposedChart data={trendData}>
-                      <CartesianGrid strokeOpacity={0.1} vertical={false}/>
-                      <XAxis dataKey="time" fontSize={10}/>
-                      <YAxis yAxisId="left" fontSize={10} domain={[0, 100]} label={{ value: 'Power %', angle: -90, position: 'insideLeft', fontSize: 10 }} />
-                      <YAxis yAxisId="right" orientation="right" fontSize={10} domain={[20, 50]} label={{ value: 'Temp °C', angle: 90, position: 'insideRight', fontSize: 10 }} />
-                      <Tooltip contentStyle={{ borderRadius: '12px', background: '#1e293b', border: 'none', color: '#fff' }}/>
-                      <Legend/>
-                      <Area yAxisId="right" type="monotone" dataKey="suhu" name="Suhu Aktual" fill="#f97316" fillOpacity={0.1} stroke="#f97316" strokeWidth={2}/>
-                      <Line yAxisId="left" type="monotone" dataKey="h_pwr" name="Power Heater" stroke="#ef4444" strokeWidth={3} dot={false}/>
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
+            <div className="space-y-8 animate-in fade-in duration-500">
+              {/* Metrics Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <KPICard title="Suhu Aktual" value={metrics.suhu.toFixed(1)} unit="°C" icon={<Thermometer />} color="from-orange-500 to-red-500" />
+                <KPICard title="RPM Aktual" value={metrics.rpm_mikro.toFixed(0)} unit="RPM" icon={<Gauge />} color="from-blue-500 to-indigo-500" />
+                <KPICard title="Heater Verify (PY)" value={metrics.pwr_heater_python.toFixed(1)} unit="%" icon={<Zap />} color="from-amber-500 to-orange-500" />
+                <KPICard title="RPM Verify (PY)" value={metrics.rpm_python.toFixed(1)} unit="RPM" icon={<ShieldCheck />} color="from-emerald-500 to-teal-500" />
               </div>
 
-              {/* KANAN: MOTOR ANALYSIS */}
-              <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border dark:border-white/5">
-                <h3 className="font-bold mb-4 uppercase text-xs tracking-widest text-indigo-500">Right: Motor Analysis (Master)</h3>
-                <div className="h-[300px]">
-                  <ResponsiveContainer>
-                    <ComposedChart data={trendData}>
-                      <CartesianGrid strokeOpacity={0.1} vertical={false}/>
-                      <XAxis dataKey="time" fontSize={10}/>
-                      <YAxis yAxisId="left" fontSize={10} label={{ value: 'RPM', angle: -90, position: 'insideLeft', fontSize: 10 }} />
-                      <YAxis yAxisId="right" orientation="right" fontSize={10} domain={[0, 100]} label={{ value: 'Power %', angle: 90, position: 'insideRight', fontSize: 10 }} />
-                      <Tooltip contentStyle={{ borderRadius: '12px', background: '#1e293b', border: 'none', color: '#fff' }}/>
-                      <Legend/>
-                      <Line yAxisId="left" type="monotone" dataKey="rpm" name="RPM Aktual" stroke="#6366f1" strokeWidth={3} dot={false}/>
-                      <Line yAxisId="right" type="monotone" dataKey="m_pwr" name="Power Motor" stroke="#a855f7" strokeWidth={2} dot={false}/>
-                    </ComposedChart>
-                  </ResponsiveContainer>
+              {/* GRID GRAFIK: KIRI THERMAL, KANAN MOTOR */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                
+                {/* GRAFIK 1 (KIRI): THERMAL VERIFICATION */}
+                <div className="bg-white dark:bg-slate-900/50 p-8 rounded-[2.5rem] border border-slate-200 dark:border-white/5 shadow-xl shadow-black/5">
+                  <h3 className="text-lg font-black mb-1 uppercase tracking-tighter text-orange-500">Slave: Thermal Analysis</h3>
+                  <p className="text-xs text-slate-500 mb-8 font-bold">Heater Power: Mikro (Solid) vs Python (Dashed)</p>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.05}/>
+                        <XAxis dataKey="time" fontSize={10} tickLine={false} />
+                        <YAxis yAxisId="left" fontSize={10} domain={[0, 100]} />
+                        <YAxis yAxisId="right" orientation="right" fontSize={10} domain={[25, 50]} />
+                        <Tooltip contentStyle={{borderRadius:'15px', border:'none', background:'#0f172a', color:'#fff'}}/>
+                        <Legend verticalAlign="top" align="right"/>
+                        <Area yAxisId="right" type="monotone" dataKey="suhu" name="Suhu (°C)" fill="#f97316" fillOpacity={0.05} stroke="#f97316" strokeWidth={1} isAnimationActive={false}/>
+                        <Line yAxisId="left" type="monotone" dataKey="pwr_heater_mikro" name="Heater Mikro" stroke="#ef4444" strokeWidth={3} dot={false} isAnimationActive={false}/>
+                        <Line yAxisId="left" type="monotone" dataKey="pwr_heater_python" name="Heater Python" stroke="#ef4444" strokeWidth={2} strokeDasharray="5 5" dot={false} isAnimationActive={false}/>
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
+
+                {/* GRAFIK 2 (KANAN): MOTOR VERIFICATION */}
+                <div className="bg-white dark:bg-slate-900/50 p-8 rounded-[2.5rem] border border-slate-200 dark:border-white/5 shadow-xl shadow-black/5">
+                  <h3 className="text-lg font-black mb-1 uppercase tracking-tighter text-indigo-500">Master: Motor Performance</h3>
+                  <p className="text-xs text-slate-500 mb-8 font-bold">RPM Speed: Mikro (Solid) vs Python (Dashed)</p>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.05}/>
+                        <XAxis dataKey="time" fontSize={10} tickLine={false} />
+                        <YAxis fontSize={10} />
+                        <Tooltip contentStyle={{borderRadius:'15px', border:'none', background:'#0f172a', color:'#fff'}}/>
+                        <Legend verticalAlign="top" align="right"/>
+                        <Line type="monotone" dataKey="rpm_mikro" name="RPM Mikro" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false}/>
+                        <Line type="monotone" dataKey="rpm_python" name="RPM Python" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 5" dot={false} isAnimationActive={false}/>
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
               </div>
             </div>
           )}
 
           {activeTab === "logs" && (
-            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border dark:border-white/5 animate-in fade-in">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="font-bold uppercase tracking-tighter">Monitoring Records</h3>
-                <div className="flex gap-2">
-                  <button onClick={exportSlaveCSV} className="bg-orange-600 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-orange-500/20 hover:scale-95 transition-all"><Download size={14} className="inline mr-1"/> Slave CSV</button>
-                  <button onClick={exportMasterCSV} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:scale-95 transition-all"><Download size={14} className="inline mr-1"/> Master CSV</button>
+            <div className="bg-white dark:bg-slate-900/50 p-8 rounded-[2.5rem] border border-slate-200 dark:border-white/5 animate-in slide-in-from-bottom-5 duration-500">
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-xl font-black uppercase tracking-tighter text-emerald-500">Master-Slave Records</h3>
+                <div className="flex gap-3">
+                  <button onClick={exportThermalCSV} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-orange-500/20 hover:scale-95 transition-all"><Download size={14} className="inline mr-2"/> Thermal CSV</button>
+                  <button onClick={exportMotorCSV} className="bg-indigo-500 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:scale-95 transition-all"><Download size={14} className="inline mr-2"/> Motor CSV</button>
                 </div>
               </div>
-              <div className="overflow-auto max-h-[450px]">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0 uppercase text-[10px] tracking-widest text-slate-400">
-                    <tr className="border-b dark:border-white/10">
-                      <th className="p-4">Time</th>
-                      <th className="p-4 text-orange-500">Temp (S)</th>
-                      <th className="p-4">Heater (S)</th>
-                      <th className="p-4 text-indigo-500">RPM (M)</th>
-                      <th className="p-4">Motor (M)</th>
+              <div className="overflow-auto max-h-[500px] scrollbar-hide">
+                <table className="w-full text-left text-sm uppercase tracking-widest">
+                  <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0 opacity-50 z-10 font-black">
+                    <tr className="border-b border-slate-200 dark:border-slate-700">
+                      <th className="p-5">Waktu</th>
+                      <th className="p-5">Suhu (S)</th>
+                      <th className="p-5">Heater M (S)</th>
+                      <th className="p-5">RPM M (M)</th>
+                      <th className="p-5">RPM PY (V)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {[...trendData].reverse().map((r, i) => (
-                      <tr key={i} className="border-b dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
-                        <td className="p-4 font-mono text-[11px] opacity-50">{r.time}</td>
-                        <td className="p-4 font-bold">{r.suhu.toFixed(1)}°</td>
-                        <td className="p-4">{r.h_pwr.toFixed(0)}%</td>
-                        <td className="p-4 font-bold">{r.rpm.toFixed(0)}</td>
-                        <td className="p-4">{r.m_pwr.toFixed(0)}%</td>
+                    {[...trendData].reverse().map((row, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
+                        <td className="p-5 font-mono text-[11px] opacity-40">{row.time}</td>
+                        <td className="p-5 font-black text-orange-500">{row.suhu.toFixed(1)}°</td>
+                        <td className="p-5 font-bold">{row.pwr_heater_mikro.toFixed(0)}%</td>
+                        <td className="p-5 font-black text-indigo-500">{row.rpm_mikro.toFixed(0)}</td>
+                        <td className="p-5 italic opacity-60 font-medium">{row.rpm_python.toFixed(1)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -190,16 +240,16 @@ export default function CloudMonitorDashboard() {
   );
 }
 
-function StatCard({ t, v, u, c, i }: any) {
+function KPICard({ title, value, unit, icon, color }: any) {
   return (
-    <div className="bg-white dark:bg-slate-900/50 p-6 rounded-2xl border dark:border-white/5 shadow-sm">
-      <div className="flex justify-between items-start mb-4">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t}</span>
-        <div className={`${c} opacity-80`}>{i}</div>
+    <div className="bg-white dark:bg-slate-900/50 p-6 rounded-[2rem] border border-slate-200 dark:border-white/5 shadow-xl shadow-black/5 transition-all hover:-translate-y-1">
+      <div className="flex justify-between mb-4">
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</span>
+        <div className={`p-2.5 rounded-2xl bg-gradient-to-br ${color} text-white shadow-lg`}>{icon}</div>
       </div>
       <div className="flex items-baseline gap-1">
-        <h3 className="text-3xl font-black">{v}</h3>
-        <span className="text-slate-400 text-xs font-bold uppercase">{u}</span>
+        <h3 className="text-4xl font-black tracking-tighter">{value}</h3>
+        <span className="text-slate-400 text-[10px] font-black italic">{unit}</span>
       </div>
     </div>
   );
