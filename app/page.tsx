@@ -134,17 +134,13 @@ export default function FuzzyPIDDashboard() {
   };
 
   // ==========================================
-  // MENGGUNAKAN DATA REAL-TIME DARI BACKEND PYTHON
+  // HANYA MENGAMBIL DAN MENAMPILKAN DATA DARI BACKEND
   // ==========================================
   useEffect(() => {
     const interval = setInterval(() => {
       const nowStr = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-      // Proteksi nilai terbalik
-      const safeTempMin = Math.min(targetTempMin, targetTempMax);
-      const safeTempMax = Math.max(targetTempMin, targetTempMax);
-
-      // GUNAKAN DATA DARI BACKEND PYTHON (FIREBASE)
+      // HANYA GUNAKAN DATA DARI BACKEND PYTHON (FIREBASE)
       if (realTimeData && apiStatus === "connected") {
         const newMetrics = {
           temp: realTimeData.slave.suhu,
@@ -153,10 +149,10 @@ export default function FuzzyPIDDashboard() {
           days: metrics.days
         };
 
-        // Update metrics
+        // Update metrics dengan data dari backend
         setMetrics(newMetrics);
 
-        // Tambahkan ke trend data untuk grafik
+        // Tambahkan ke trend data untuk grafik (hanya saat RUNNING)
         if (processState === "RUNNING") {
           setTrendData(prevTrend => {
             const newDataPoint = {
@@ -169,9 +165,9 @@ export default function FuzzyPIDDashboard() {
               setPointRpm: targetRpm
             };
             
-            // Batasi data trend maksimal 50 titik untuk performa
+            // Batasi data trend maksimal 100 titik untuk performa
             const updatedTrend = [...prevTrend, newDataPoint];
-            return updatedTrend.length > 50 ? updatedTrend.slice(-50) : updatedTrend;
+            return updatedTrend.length > 100 ? updatedTrend.slice(-100) : updatedTrend;
           });
 
           // Update days counter
@@ -188,105 +184,24 @@ export default function FuzzyPIDDashboard() {
 
           // Logging periodik
           if (Math.random() > 0.95) {
-            const tempError = newMetrics.temp < safeTempMin ? safeTempMin - newMetrics.temp : (newMetrics.temp > safeTempMax ? safeTempMax - newMetrics.temp : 0);
-            const errorText = tempError === 0 ? "Zona Aman" : `${tempError.toFixed(1)}°C`;
-            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "INFO", message: `[Firebase] Update: Error ${errorText} -> PWM: ${newMetrics.dimmer.toFixed(0)}%` } as AlarmLog, ...a].slice(0, 50));
+            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "INFO", message: `Data Update: Suhu ${newMetrics.temp.toFixed(1)}°C | PWM ${newMetrics.dimmer.toFixed(0)}% | RPM ${newMetrics.rpm.toFixed(0)}` } as AlarmLog, ...a].slice(0, 50));
           }
         }
 
-        // Handle E-Stop
-        if (isEStop) {
-          setMetrics(prev => ({
-            ...prev,
-            dimmer: 0,
-            rpm: Math.max(0, prev.rpm - 20)
-          }));
+        // Handle E-Stop - hanya reset display
+        if (isEStop && processState === "RUNNING") {
+          setProcessState("IDLE");
         }
 
-        // Check critical temperature
-        if (newMetrics.temp >= 50 && processState === "RUNNING") {
-          setIsEStop(true);
-          setProcessState("IDLE");
-          setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "CRITICAL", message: "ALARM: Suhu Sangat Kritis (>50°C). Sistem Interlock Aktif!" } as AlarmLog, ...a].slice(0, 50));
+        // Check critical temperature (warning saja, tidak mengubah data)
+        if (newMetrics.temp >= 50 && processState === "RUNNING" && !isEStop) {
+          setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "CRITICAL", message: `PERINGATAN: Suhu Kritis (${newMetrics.temp.toFixed(1)}°C)!` } as AlarmLog, ...a].slice(0, 50));
         }
       } else {
-        // Fallback ke simulasi jika API tidak tersedia
-        setMetrics(prev => {
-          let { temp, dimmer, rpm, days } = prev;
-
-          if (isEStop) {
-            dimmer = 0;
-            temp = Math.max(28, temp - (Math.random() * 0.5 + 0.2));
-            rpmVelocity.current = 0;
-            rpm = Math.max(0, rpm - 20);
-          } else if (processState === "RUNNING") {
-            // Simulasi Fuzzy Logic
-            let tempError = 0;
-            if (temp < safeTempMin) tempError = safeTempMin - temp;
-            else if (temp > safeTempMax) tempError = safeTempMax - temp;
-
-            if (temp >= 50) {
-              dimmer = 0;
-              setIsEStop(true);
-              setProcessState("IDLE");
-              setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "CRITICAL", message: "ALARM: Suhu Sangat Kritis (>50°C). Sistem Interlock Aktif!" } as AlarmLog, ...a].slice(0, 50));
-            } else {
-              if (tempError > 5) dimmer = 95 + Math.random() * 5;
-              else if (tempError > 1) dimmer = 60 + (tempError * 5) + Math.random() * 5;
-              else if (tempError > 0) dimmer = 30 + Math.random() * 10;
-              else if (tempError === 0) dimmer = 10 + Math.random() * 5;
-              else dimmer = 0;
-            }
-
-            let heatAdded = (dimmer / 100) * 0.8;
-            let heatLost = (temp > 28) ? 0.2 : 0;
-            temp += (heatAdded - heatLost);
-
-            // PID RPM
-            let rpmError = targetRpm - rpm;
-            let Kp = 0.35;
-            let Kd = 0.70;
-
-            rpmVelocity.current = (rpmVelocity.current + (rpmError * Kp)) * Kd;
-            rpm += rpmVelocity.current + (Math.random() - 0.5) * 2;
-            if (rpm < 0) { rpm = 0; rpmVelocity.current = 0; }
-
-            days += 0.5;
-            if (days >= TARGET_DAYS) {
-              days = TARGET_DAYS;
-              setProcessState("COMPLETED");
-              setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: "PROSES SELESAI: Target 14 Hari tercapai." } as AlarmLog, ...a].slice(0, 50));
-            }
-
-            // Tambahkan ke trend data
-            setTrendData(prevTrend => {
-              const newDataPoint = {
-                time: nowStr,
-                temperature: temp,
-                dimmer: dimmer,
-                rpm: rpm,
-                days: days,
-                setPointTemp: `${targetTempMin}-${targetTempMax}`,
-                setPointRpm: targetRpm
-              };
-              const updatedTrend = [...prevTrend, newDataPoint];
-              return updatedTrend.length > 50 ? updatedTrend.slice(-50) : updatedTrend;
-            });
-
-            if (Math.random() > 0.95) {
-              const errorText = tempError === 0 ? "Zona Aman" : `${tempError.toFixed(1)}°C`;
-              setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "INFO", message: `[Simulasi] Update: Error ${errorText} -> PWM: ${dimmer.toFixed(0)}%` } as AlarmLog, ...a].slice(0, 50));
-            }
-          } else {
-            // IDLE / COMPLETED
-            dimmer = 0;
-            temp = Math.max(28, temp - (Math.random() * 0.4 + 0.1));
-            rpmVelocity.current = rpmVelocity.current * 0.5;
-            rpm = Math.max(0, rpm + rpmVelocity.current - 5);
-          }
-
-          return { temp: +(temp.toFixed(2)), dimmer: +(dimmer.toFixed(1)), rpm: +(rpm.toFixed(1)), days };
-        });
+        // Jika API tidak tersedia, tampilkan pesan
+        if (processState === "RUNNING") {
+          setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "WARNING", message: "Backend tidak terhubung. Menunggu koneksi..." } as AlarmLog, ...a].slice(0, 50));
+        }
       }
 
     }, 1500);
