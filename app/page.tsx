@@ -1,195 +1,505 @@
 "use client";
-import React, { useState, useEffect } from "react";
-import { 
-  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, 
-  Tooltip, ResponsiveContainer, Legend 
-} from "recharts";
-import { 
-  Activity, Clock, Zap, Thermometer, Gauge, 
-  Sun, Moon, Download, Power, CheckCircle2,
-  SlidersHorizontal, ClipboardList, ShieldCheck
-} from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, Legend } from "recharts";
+import { AlertTriangle, CheckCircle2, Activity, Database, Clock, Zap, Thermometer, Gauge, ShieldAlert, Settings2, Sun, Moon, Wifi, FlaskConical, Download, AlertOctagon, SlidersHorizontal, ClipboardList, TableProperties, Power, CalendarCheck, WifiOff } from "lucide-react";
 
 // --- Types ---
-interface ProcessData { 
-  time: string; 
-  suhu: number; 
-  pwr_heater_mikro: number; 
-  pwr_heater_python: number;
-  rpm_mikro: number;
-  rpm_python: number;
-}
+interface ProcessData { time: string; temperature: number; dimmer: number; rpm: number; days: number; setPointTemp?: string; setPointRpm?: number; }
+interface AlarmLog { id: string; time: string; type: "WARNING" | "INFO" | "CRITICAL" | "SUCCESS"; message: string; }
+interface BatchHistory { id: string; data: ProcessData[]; }
+interface FirebaseData { slave: { suhu: number; heaterPower: number; }; master: { rpm: number; motorPower: number; }; }
 
-interface AlarmLog { id: string; time: string; type: string; message: string; }
+type ProcessState = "IDLE" | "RUNNING" | "COMPLETED";
 
-export default function IndustrialInformaticsDashboard() {
+export default function FuzzyPIDDashboard() {
   const [isClient, setIsClient] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState<"control" | "logs">("control");
-  const [processState, setProcessState] = useState<"IDLE" | "RUNNING">("IDLE");
-  const [trendData, setTrendData] = useState<ProcessData[]>([]);
+
+  const [processState, setProcessState] = useState<ProcessState>("IDLE");
+  const [isEStop, setIsEStop] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [apiStatus, setApiStatus] = useState<"connected" | "disconnected" | "error">("disconnected");
   
-  const [metrics, setMetrics] = useState({ 
-    suhu: 0, pwr_heater_mikro: 0, pwr_heater_python: 0, 
-    rpm_mikro: 0, rpm_python: 0 
-  });
+  // Setpoints Menggunakan Rentang (Min & Max) untuk Suhu, dan Setpoint untuk RPM
+  const [targetTempMin, setTargetTempMin] = useState<number>(38);
+  const [targetTempMax, setTargetTempMax] = useState<number>(42);
+  const [targetRpm, setTargetRpm] = useState<number>(120);
+  const TARGET_DAYS = 14; 
+
+  const [batchId, setBatchId] = useState<string>("PRD-Kopi-01");
+  const [trendData, setTrendData] = useState<ProcessData[]>([]);
+  const [pastBatches, setPastBatches] = useState<BatchHistory[]>([]);
+  const [viewingBatchId, setViewingBatchId] = useState<string>("current");
 
   const [alarms, setAlarms] = useState<AlarmLog[]>([
-    { id: "1", time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Dashboard Terhubung ke API Python Cloud. Menunggu data..." }
+    { id: "1", time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Inisialisasi Sistem Hardware Selesai. Menunggu perintah..." } as AlarmLog,
   ]);
 
-  useEffect(() => { setIsClient(true); }, []);
+  const [metrics, setMetrics] = useState({ temp: 28.5, dimmer: 0, rpm: 0, days: 0 });
+  const [realTimeData, setRealTimeData] = useState<FirebaseData | null>(null);
+  const rpmVelocity = useRef(0);
 
-  // ==========================================
-  // FETCH DATA DARI API PYTHON (VERSI CLOUD)
-  // ==========================================
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  // Fetch data from backend API
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await fetch('/api/index'); 
+        const response = await fetch('/api/index');
         const result = await response.json();
-
-        if (result.status === "success" && result.data) {
-          const cloud = result.data;
-          const nowStr = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-
-          // Mapping data sesuai struktur Master/Slave & Verifikasi Python
-          const currentMetrics = {
-            suhu: cloud.slave?.suhu || 0,
-            pwr_heater_mikro: cloud.slave?.heaterPower || 0,
-            pwr_heater_python: cloud.verifikasi?.heater_python || 0,
-            rpm_mikro: cloud.master?.rpm || 0,
-            rpm_python: cloud.verifikasi?.rpm_python || 0
-          };
-
-          setMetrics(currentMetrics);
-
-          if (processState === "RUNNING") {
-            setTrendData(prev => [...prev, { time: nowStr, ...currentMetrics }].slice(-50));
-          }
+        
+        if (result.status === "success") {
+          setRealTimeData(result.data);
+          setApiStatus("connected");
+          setIsOnline(true);
+        } else {
+          setApiStatus("error");
+          console.error("API Error:", result.message);
         }
-      } catch (error) { 
-        console.error("Fetch Error:", error); 
+      } catch (error) {
+        setApiStatus("disconnected");
+        setIsOnline(false);
+        console.error("Failed to fetch data:", error);
       }
     };
 
-    const interval = setInterval(fetchData, 2000); // Polling setiap 2 detik
-    return () => clearInterval(interval);
-  }, [processState]);
+    // Initial fetch
+    fetchData();
 
-  // ==========================================
-  // FUNGSI EKSPOR CSV TERPISAH
-  // ==========================================
+    // Poll every 2 seconds
+    const interval = setInterval(fetchData, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const toggleEStop = () => {
+    setIsEStop(!isEStop);
+    if (!isEStop) {
+      setProcessState("IDLE");
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "CRITICAL", message: "EMERGENCY STOP! Semua Aktuator Dimatikan Paksa." } as AlarmLog, ...prev].slice(0, 50));
+    } else {
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "E-Stop di-reset. Sistem Standby." } as AlarmLog, ...prev].slice(0, 50));
+    }
+  };
+
+  const handleStartStop = () => {
+    if (processState === "IDLE" || processState === "COMPLETED") {
+      setProcessState("RUNNING");
+      setMetrics(prev => ({ ...prev, days: 0 }));
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Sistem Aktif. Menjaga Suhu (${targetTempMin}-${targetTempMax}°C) & Motor (${targetRpm} RPM).` } as AlarmLog, ...prev].slice(0, 50));
+    } else {
+      setProcessState("IDLE");
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "WARNING", message: "Proses dihentikan manual oleh user." } as AlarmLog, ...prev].slice(0, 50));
+    }
+  };
+
+  const startNewBatch = () => {
+    if (trendData.length > 0) setPastBatches(prev => [{ id: batchId, data: [...trendData] }, ...prev]);
+    const newId = `PRD-Kopi-${Math.floor(Math.random() * 1000)}`;
+    setBatchId(newId);
+    setTrendData([]); 
+    setViewingBatchId("current"); 
+    setProcessState("IDLE");
+    setMetrics({ temp: 28.5, dimmer: 0, rpm: 0, days: 0 });
+    setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Batch baru dimulai: ${newId}.` } as AlarmLog, ...prev].slice(0, 50));
+  };
+
   const exportThermalCSV = () => {
-    if (trendData.length === 0) return alert("Belum ada data.");
-    const headers = "Waktu;Suhu(C);Heater_Mikro(%);Heater_Python(%)\n";
-    const body = trendData.map(r => `${r.time};${r.suhu};${r.pwr_heater_mikro};${r.pwr_heater_python}`).join("\n");
-    downloadFile(headers + body, "Log_Slave_Thermal.csv");
+    const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
+    if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
+    const headers = "Suhu(C);Set Point Suhu;PWM Heater;Waktu\n";
+    const csvData = dataToExport.map(row => `${row.temperature.toFixed(2).replace('.', ',')};${row.setPointTemp || `${targetTempMin}-${targetTempMax}`};${row.dimmer.toFixed(0)};${row.time}`).join("\n");
+    const blob = new Blob([headers + csvData], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Log_Thermal_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
+    a.click();
   };
 
   const exportMotorCSV = () => {
-    if (trendData.length === 0) return alert("Belum ada data.");
-    const headers = "Waktu;RPM_Mikro;RPM_Python\n";
-    const body = trendData.map(r => `${r.time};${r.rpm_mikro};${r.rpm_python}`).join("\n");
-    downloadFile(headers + body, "Log_Master_Motor.csv");
-  };
-
-  const downloadFile = (content: string, fileName: string) => {
-    const blob = new Blob([content], { type: "text/csv" });
+    const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
+    if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
+    const headers = "RPM Aktual;Set Point RPM;Waktu\n";
+    const csvData = dataToExport.map(row => `${row.rpm.toFixed(0)};${row.setPointRpm || targetRpm};${row.time}`).join("\n");
+    const blob = new Blob([headers + csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = fileName; a.click();
+    a.href = url;
+    a.download = `Log_Motor_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
+    a.click();
   };
+
+  // ==========================================
+  // MENGGUNAKAN DATA REAL-TIME DARI BACKEND PYTHON
+  // ==========================================
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const nowStr = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+      // Proteksi nilai terbalik
+      const safeTempMin = Math.min(targetTempMin, targetTempMax);
+      const safeTempMax = Math.max(targetTempMin, targetTempMax);
+
+      // GUNAKAN DATA DARI BACKEND PYTHON (FIREBASE)
+      if (realTimeData && apiStatus === "connected") {
+        const newMetrics = {
+          temp: realTimeData.slave.suhu,
+          dimmer: realTimeData.slave.heaterPower,
+          rpm: realTimeData.master.rpm,
+          days: metrics.days
+        };
+
+        // Update metrics
+        setMetrics(newMetrics);
+
+        // Tambahkan ke trend data untuk grafik
+        if (processState === "RUNNING") {
+          setTrendData(prevTrend => {
+            const newDataPoint = {
+              time: nowStr,
+              temperature: newMetrics.temp,
+              dimmer: newMetrics.dimmer,
+              rpm: newMetrics.rpm,
+              days: newMetrics.days,
+              setPointTemp: `${targetTempMin}-${targetTempMax}`,
+              setPointRpm: targetRpm
+            };
+            
+            // Batasi data trend maksimal 50 titik untuk performa
+            const updatedTrend = [...prevTrend, newDataPoint];
+            return updatedTrend.length > 50 ? updatedTrend.slice(-50) : updatedTrend;
+          });
+
+          // Update days counter
+          setMetrics(prev => ({
+            ...prev,
+            days: prev.days + 0.5
+          }));
+
+          // Check if process completed
+          if (newMetrics.days >= TARGET_DAYS) {
+            setProcessState("COMPLETED");
+            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: "PROSES SELESAI: Target 14 Hari tercapai." } as AlarmLog, ...a].slice(0, 50));
+          }
+
+          // Logging periodik
+          if (Math.random() > 0.95) {
+            const tempError = newMetrics.temp < safeTempMin ? safeTempMin - newMetrics.temp : (newMetrics.temp > safeTempMax ? safeTempMax - newMetrics.temp : 0);
+            const errorText = tempError === 0 ? "Zona Aman" : `${tempError.toFixed(1)}°C`;
+            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "INFO", message: `[Firebase] Update: Error ${errorText} -> PWM: ${newMetrics.dimmer.toFixed(0)}%` } as AlarmLog, ...a].slice(0, 50));
+          }
+        }
+
+        // Handle E-Stop
+        if (isEStop) {
+          setMetrics(prev => ({
+            ...prev,
+            dimmer: 0,
+            rpm: Math.max(0, prev.rpm - 20)
+          }));
+        }
+
+        // Check critical temperature
+        if (newMetrics.temp >= 50 && processState === "RUNNING") {
+          setIsEStop(true);
+          setProcessState("IDLE");
+          setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "CRITICAL", message: "ALARM: Suhu Sangat Kritis (>50°C). Sistem Interlock Aktif!" } as AlarmLog, ...a].slice(0, 50));
+        }
+      } else {
+        // Fallback ke simulasi jika API tidak tersedia
+        setMetrics(prev => {
+          let { temp, dimmer, rpm, days } = prev;
+
+          if (isEStop) {
+            dimmer = 0;
+            temp = Math.max(28, temp - (Math.random() * 0.5 + 0.2));
+            rpmVelocity.current = 0;
+            rpm = Math.max(0, rpm - 20);
+          } else if (processState === "RUNNING") {
+            // Simulasi Fuzzy Logic
+            let tempError = 0;
+            if (temp < safeTempMin) tempError = safeTempMin - temp;
+            else if (temp > safeTempMax) tempError = safeTempMax - temp;
+
+            if (temp >= 50) {
+              dimmer = 0;
+              setIsEStop(true);
+              setProcessState("IDLE");
+              setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "CRITICAL", message: "ALARM: Suhu Sangat Kritis (>50°C). Sistem Interlock Aktif!" } as AlarmLog, ...a].slice(0, 50));
+            } else {
+              if (tempError > 5) dimmer = 95 + Math.random() * 5;
+              else if (tempError > 1) dimmer = 60 + (tempError * 5) + Math.random() * 5;
+              else if (tempError > 0) dimmer = 30 + Math.random() * 10;
+              else if (tempError === 0) dimmer = 10 + Math.random() * 5;
+              else dimmer = 0;
+            }
+
+            let heatAdded = (dimmer / 100) * 0.8;
+            let heatLost = (temp > 28) ? 0.2 : 0;
+            temp += (heatAdded - heatLost);
+
+            // PID RPM
+            let rpmError = targetRpm - rpm;
+            let Kp = 0.35;
+            let Kd = 0.70;
+
+            rpmVelocity.current = (rpmVelocity.current + (rpmError * Kp)) * Kd;
+            rpm += rpmVelocity.current + (Math.random() - 0.5) * 2;
+            if (rpm < 0) { rpm = 0; rpmVelocity.current = 0; }
+
+            days += 0.5;
+            if (days >= TARGET_DAYS) {
+              days = TARGET_DAYS;
+              setProcessState("COMPLETED");
+              setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: "PROSES SELESAI: Target 14 Hari tercapai." } as AlarmLog, ...a].slice(0, 50));
+            }
+
+            // Tambahkan ke trend data
+            setTrendData(prevTrend => {
+              const newDataPoint = {
+                time: nowStr,
+                temperature: temp,
+                dimmer: dimmer,
+                rpm: rpm,
+                days: days,
+                setPointTemp: `${targetTempMin}-${targetTempMax}`,
+                setPointRpm: targetRpm
+              };
+              const updatedTrend = [...prevTrend, newDataPoint];
+              return updatedTrend.length > 50 ? updatedTrend.slice(-50) : updatedTrend;
+            });
+
+            if (Math.random() > 0.95) {
+              const errorText = tempError === 0 ? "Zona Aman" : `${tempError.toFixed(1)}°C`;
+              setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "INFO", message: `[Simulasi] Update: Error ${errorText} -> PWM: ${dimmer.toFixed(0)}%` } as AlarmLog, ...a].slice(0, 50));
+            }
+          } else {
+            // IDLE / COMPLETED
+            dimmer = 0;
+            temp = Math.max(28, temp - (Math.random() * 0.4 + 0.1));
+            rpmVelocity.current = rpmVelocity.current * 0.5;
+            rpm = Math.max(0, rpm + rpmVelocity.current - 5);
+          }
+
+          return { temp: +(temp.toFixed(2)), dimmer: +(dimmer.toFixed(1)), rpm: +(rpm.toFixed(1)), days };
+        });
+      }
+
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [processState, isEStop, targetTempMin, targetTempMax, targetRpm, realTimeData, apiStatus, metrics.days]);
 
   if (!isClient) return null;
 
+  const chartColors = {
+    grid: isDarkMode ? "#334155" : "#e2e8f0", axis: isDarkMode ? "#94a3b8" : "#64748b",
+    tooltipBg: isDarkMode ? "rgba(15, 23, 42, 0.9)" : "rgba(255, 255, 255, 0.9)", tooltipBorder: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)", tooltipText: isDarkMode ? "#fff" : "#0f172a",
+  };
+
+  const displayTableData = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0a0f1c] text-slate-800 dark:text-slate-200 transition-colors duration-500 pb-10">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:bg-[#0a0f1c] dark:bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] dark:from-slate-900 dark:via-[#0a0f1c] dark:to-[#050810] text-slate-800 dark:text-slate-200 font-sans transition-colors duration-500 selection:bg-emerald-500/30 pb-10">
         
-        {/* Navigation */}
-        <nav className="sticky top-0 z-50 bg-white/70 dark:bg-slate-950/50 backdrop-blur-xl border-b border-slate-200 dark:border-white/5 px-8 py-4 flex justify-between items-center shadow-sm">
+        <nav className="sticky top-0 z-50 bg-white/80 dark:bg-slate-950/60 backdrop-blur-2xl border-b border-slate-200/50 dark:border-white/10 px-8 py-4 flex justify-between items-center shadow-lg shadow-slate-200/50 dark:shadow-emerald-500/5 transition-all duration-500">
           <div className="flex items-center gap-4">
-            <div className="bg-emerald-500 p-2.5 rounded-xl shadow-lg"><Activity size={24} className="text-white" /></div>
-            <h1 className="font-extrabold text-xl uppercase tracking-tighter">
-              Industrial <span className="font-light text-slate-500">Informatics</span>
-            </h1>
+            <div className="bg-gradient-to-br from-emerald-400 via-emerald-500 to-emerald-600 p-2.5 rounded-2xl shadow-xl shadow-emerald-500/30 ring-2 ring-emerald-400/30 dark:ring-emerald-500/40 animate-pulse-slow">
+              <Activity size={26} className="text-white" strokeWidth={2.5} />
+            </div>
+            <div>
+              <h1 className="font-extrabold text-xl text-transparent bg-clip-text bg-gradient-to-r from-slate-800 via-slate-700 to-slate-600 dark:from-white dark:via-slate-200 dark:to-slate-400 tracking-tight">
+                DASHBOARD <span className="font-light text-slate-400 dark:text-slate-500">Fuzzy-PID</span>
+              </h1>
+              <p className="text-[10px] text-slate-500 dark:text-slate-600 font-medium tracking-wide">Real-time Industrial Control System</p>
+            </div>
           </div>
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 ring-1 ring-slate-200 dark:ring-white/5">
-            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
+          <div className="flex items-center gap-4">
+            {/* API Connection Status */}
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl backdrop-blur-md transition-all duration-300 ${
+              apiStatus === "connected" 
+                ? "bg-emerald-50/80 dark:bg-emerald-500/10 ring-1 ring-emerald-500/30" 
+                : apiStatus === "error"
+                ? "bg-amber-50/80 dark:bg-amber-500/10 ring-1 ring-amber-500/30"
+                : "bg-rose-50/80 dark:bg-rose-500/10 ring-1 ring-rose-500/30"
+            }`}>
+              {apiStatus === "connected" ? (
+                <>
+                  <Wifi size={16} className="text-emerald-600 dark:text-emerald-400 animate-pulse" />
+                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">Firebase Connected</span>
+                </>
+              ) : apiStatus === "error" ? (
+                <>
+                  <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400" />
+                  <span className="text-xs font-bold text-amber-700 dark:text-amber-400">API Error</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff size={16} className="text-rose-600 dark:text-rose-400" />
+                  <span className="text-xs font-bold text-rose-700 dark:text-rose-400">Disconnected</span>
+                </>
+              )}
+            </div>
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-3 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-700 text-slate-600 hover:text-emerald-500 dark:text-slate-400 dark:hover:text-emerald-400 ring-1 ring-slate-300/50 dark:ring-white/10 transition-all duration-300 hover:scale-105 hover:shadow-lg">
+              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
+          </div>
         </nav>
 
         <main className="p-8 max-w-[1600px] mx-auto">
-          {/* Dashboard Header */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 border-b border-slate-200 dark:border-white/10 pb-6">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 border-b border-slate-200/60 dark:border-white/10 pb-6">
             <div>
-              <h2 className="text-3xl font-bold uppercase tracking-tight">System <span className="text-emerald-500">Verification</span></h2>
-              <p className="text-slate-500 dark:text-slate-400 font-medium">Monitoring Real-time Master (Motor) & Slave (Thermal) via Cloud Analysis.</p>
+              <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 transition-colors">Advanced <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-500">HMI Dashboard</span></h2>
+              <p className="text-slate-500 dark:text-slate-400 transition-colors">Monitoring Kontrol Fuzzy Logic & Analog PID berdasarkan Rentang (Band).</p>
             </div>
-            <button 
-              onClick={() => setProcessState(processState === "IDLE" ? "RUNNING" : "IDLE")} 
-              className={`px-10 py-4 rounded-2xl font-black transition-all shadow-lg active:scale-95 ${
-                processState === "IDLE" ? "bg-emerald-500 text-white shadow-emerald-500/20" : "bg-rose-500 text-white shadow-rose-500/20"
-              }`}
-            >
-              <Power size={20} className="inline mr-2"/> {processState === "IDLE" ? "START MONITOR" : "STOP MONITOR"}
-            </button>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 bg-gradient-to-br from-white to-slate-50 dark:from-slate-800/80 dark:to-slate-800/50 p-3 rounded-2xl ring-1 ring-slate-200/80 dark:ring-white/10 shadow-lg shadow-slate-200/50 dark:shadow-none backdrop-blur-sm">
+                <div className="px-2 flex flex-col">
+                  <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold block mb-0.5">Active Batch ID</span>
+                  <span className="font-mono font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-400 text-sm">{batchId}</span>
+                </div>
+                <div className="flex space-x-1 border-l border-slate-300 dark:border-white/10 pl-2">
+                    <button onClick={startNewBatch} disabled={processState === "RUNNING"} className="text-xs font-bold bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-3 py-2 rounded-lg hover:from-emerald-400 hover:to-emerald-500 disabled:opacity-50 transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/30 whitespace-nowrap">
+                        + Tambah
+                    </button>
+                    <button onClick={() => {
+                        const newId = prompt("Masukkan ID Batch Baru:", batchId);
+                        if (newId && newId.trim() !== "") setBatchId(newId.trim());
+                    }} disabled={processState === "RUNNING"} className="text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-3 py-2 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-all duration-300 whitespace-nowrap">
+                        ✎ Ganti
+                    </button>
+                </div>
+              </div>
+              <button onClick={toggleEStop} className={`p-3 px-8 rounded-2xl font-black tracking-widest flex items-center gap-2 transition-all duration-300 active:scale-95 shadow-xl ${isEStop ? "bg-gradient-to-r from-rose-600 to-rose-700 text-white shadow-rose-500/40 animate-pulse" : "bg-gradient-to-r from-rose-50 to-rose-100 dark:from-rose-500/10 dark:to-rose-600/10 text-rose-600 dark:text-rose-500 ring-2 ring-rose-500/50 hover:from-rose-600 hover:to-rose-700 hover:text-white"}`}>
+                <AlertOctagon size={20} /> {isEStop ? "RESET E-STOP" : "E-STOP"}
+              </button>
+            </div>
           </div>
 
-          <div className="flex gap-2 mb-8 border-b border-slate-200 dark:border-slate-800">
-            <button onClick={() => setActiveTab("control")} className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "control" ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500"}`}><SlidersHorizontal size={18} /> Visual Panel</button>
-            <button onClick={() => setActiveTab("logs")} className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "logs" ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500"}`}><ClipboardList size={18} /> Data History</button>
+          <div className="flex gap-2 mb-8 border-b border-slate-200/60 dark:border-slate-800">
+            <button onClick={() => setActiveTab("control")} className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "control" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}><SlidersHorizontal size={18} /> Control Panel</button>
+            <button onClick={() => setActiveTab("logs")} className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-all ${activeTab === "logs" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}><ClipboardList size={18} /> Data & Logs</button>
           </div>
 
           {activeTab === "control" && (
             <div className="space-y-8 animate-in fade-in duration-500">
-              {/* Metrics Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <KPICard title="Suhu Aktual" value={metrics.suhu.toFixed(1)} unit="°C" icon={<Thermometer />} color="from-orange-500 to-red-500" />
-                <KPICard title="RPM Aktual" value={metrics.rpm_mikro.toFixed(0)} unit="RPM" icon={<Gauge />} color="from-blue-500 to-indigo-500" />
-                <KPICard title="Heater Verify (PY)" value={metrics.pwr_heater_python.toFixed(1)} unit="%" icon={<Zap />} color="from-amber-500 to-orange-500" />
-                <KPICard title="RPM Verify (PY)" value={metrics.rpm_python.toFixed(1)} unit="RPM" icon={<ShieldCheck />} color="from-emerald-500 to-teal-500" />
+              
+              {/* Panel Input Angka & Start (MENGGUNAKAN RENTANG) */}
+              <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-6 bg-gradient-to-br from-white via-white to-slate-50/50 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-slate-800/40 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-3xl p-6 shadow-2xl shadow-slate-300/30 dark:shadow-emerald-500/5">
+                
+                <div className="flex items-center gap-4 bg-gradient-to-br from-orange-50/80 to-red-50/50 dark:from-orange-500/10 dark:to-red-500/5 p-4 pl-5 pr-6 rounded-2xl ring-1 ring-orange-200/80 dark:ring-orange-500/20 flex-1 backdrop-blur-sm shadow-lg shadow-orange-100/50 dark:shadow-none">
+                  <Thermometer size={22} className="text-orange-500 dark:text-orange-400" strokeWidth={2.5} />
+                  <div className="flex flex-col w-full">
+                    <span className="text-[10px] uppercase tracking-widest text-orange-600/80 dark:text-orange-400/80 font-bold">Rentang Suhu (°C)</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <input type="number" value={targetTempMin} onChange={(e) => setTargetTempMin(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-16 bg-white/60 dark:bg-slate-800/60 border-b-2 border-orange-300 dark:border-orange-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-orange-500 transition-colors rounded-t-lg px-1" />
+                      <span className="text-orange-400 dark:text-orange-500 font-bold text-lg">-</span>
+                      <input type="number" value={targetTempMax} onChange={(e) => setTargetTempMax(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-16 bg-white/60 dark:bg-slate-800/60 border-b-2 border-orange-300 dark:border-orange-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-orange-500 transition-colors rounded-t-lg px-1" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 bg-gradient-to-br from-purple-50/80 to-indigo-50/50 dark:from-purple-500/10 dark:to-indigo-500/5 p-4 pl-5 pr-6 rounded-2xl ring-1 ring-purple-200/80 dark:ring-purple-500/20 flex-1 backdrop-blur-sm shadow-lg shadow-purple-100/50 dark:shadow-none">
+                  <Settings2 size={22} className="text-purple-500 dark:text-purple-400" strokeWidth={2.5} />
+                  <div className="flex flex-col w-full">
+                    <span className="text-[10px] uppercase tracking-widest text-purple-600/80 dark:text-purple-400/80 font-bold">Setpoint Motor (RPM)</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <input type="number" value={targetRpm} onChange={(e) => setTargetRpm(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-24 bg-white/60 dark:bg-slate-800/60 border-b-2 border-purple-300 dark:border-purple-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-purple-500 transition-colors rounded-t-lg px-1" />
+                    </div>
+                  </div>
+                </div>
+                
+                <button 
+                  onClick={handleStartStop} disabled={isEStop}
+                  className={`px-10 py-5 rounded-2xl font-black tracking-widest flex items-center justify-center gap-3 transition-all duration-300 active:scale-95 disabled:opacity-50 shadow-2xl ${
+                    processState === "IDLE" || processState === "COMPLETED"
+                      ? "bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 text-white shadow-emerald-500/40 hover:from-emerald-400 hover:via-emerald-500 hover:to-teal-500" 
+                      : "bg-gradient-to-r from-rose-100 to-rose-200 dark:from-rose-500/20 dark:to-rose-600/20 text-rose-600 dark:text-rose-400 hover:from-rose-600 hover:to-rose-700 hover:text-white ring-2 ring-rose-500/50"
+                  }`}
+                >
+                  <Power size={24} /> {processState === "IDLE" || processState === "COMPLETED" ? "START SYSTEM" : "STOP SYSTEM"}
+                </button>
               </div>
 
-              {/* GRID GRAFIK: KIRI THERMAL, KANAN MOTOR */}
+              {/* KPI Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <GradientCard title="Suhu Aktual (PV)" value={metrics.temp.toFixed(1)} unit="°C" icon={<Thermometer size={24} />} color="from-orange-400 via-orange-500 to-orange-600 dark:from-orange-500 dark:to-red-600" alert={metrics.temp > targetTempMax + 5} />
+                <GradientCard title="PWM Heater" value={metrics.dimmer.toFixed(0)} unit="%" icon={<Zap size={24} />} color="from-yellow-400 via-amber-500 to-amber-600 dark:from-yellow-500 dark:to-orange-600" />
+                <GradientCard title="Kecepatan (PV)" value={metrics.rpm.toFixed(0)} unit="RPM" icon={<Gauge size={24} />} color="from-purple-500 via-purple-600 to-purple-700 dark:from-indigo-500 dark:to-purple-600" alert={metrics.rpm > targetRpm + 20} />
+                <GradientCard title="Waktu Proses" value={Math.floor(metrics.days)} unit={`/ ${TARGET_DAYS} Hari`} icon={<Clock size={24} />} color="from-blue-400 via-blue-500 to-blue-600 dark:from-blue-500 dark:to-cyan-600" />
+              </div>
+
+              {/* GRID GRAFIK (SPLIT) */}
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
                 
-                {/* GRAFIK 1 (KIRI): THERMAL VERIFICATION */}
-                <div className="bg-white dark:bg-slate-900/50 p-8 rounded-[2.5rem] border border-slate-200 dark:border-white/5 shadow-xl shadow-black/5">
-                  <h3 className="text-lg font-black mb-1 uppercase tracking-tighter text-orange-500">Slave: Thermal Analysis</h3>
-                  <p className="text-xs text-slate-500 mb-8 font-bold">Heater Power: Mikro (Solid) vs Python (Dashed)</p>
-                  <div className="h-[300px]">
+                {/* GRAFIK 1: THERMAL (FUZZY LOGIC) */}
+                <div className="bg-gradient-to-br from-white via-white to-orange-50/30 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-orange-900/10 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-3xl p-6 shadow-2xl shadow-slate-300/30 dark:shadow-orange-500/5 hover:shadow-orange-200/40 dark:hover:shadow-orange-500/10 transition-all duration-500">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                      <div className="p-2 bg-gradient-to-br from-orange-400 to-red-500 rounded-lg shadow-lg shadow-orange-500/30">
+                        <Thermometer size={18} className="text-white" />
+                      </div>
+                      Thermal Control (Fuzzy Logic)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Monitoring intervensi AC Dimmer menjaga suhu di dalam kotak target.</p>
+                  <div className="h-[280px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={trendData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.05}/>
-                        <XAxis dataKey="time" fontSize={10} tickLine={false} />
-                        <YAxis yAxisId="left" fontSize={10} domain={[0, 100]} />
-                        <YAxis yAxisId="right" orientation="right" fontSize={10} domain={[25, 50]} />
-                        <Tooltip contentStyle={{borderRadius:'15px', border:'none', background:'#0f172a', color:'#fff'}}/>
-                        <Legend verticalAlign="top" align="right"/>
-                        <Area yAxisId="right" type="monotone" dataKey="suhu" name="Suhu (°C)" fill="#f97316" fillOpacity={0.05} stroke="#f97316" strokeWidth={1} isAnimationActive={false}/>
-                        <Line yAxisId="left" type="monotone" dataKey="pwr_heater_mikro" name="Heater Mikro" stroke="#ef4444" strokeWidth={3} dot={false} isAnimationActive={false}/>
-                        <Line yAxisId="left" type="monotone" dataKey="pwr_heater_python" name="Heater Python" stroke="#ef4444" strokeWidth={2} strokeDasharray="5 5" dot={false} isAnimationActive={false}/>
+                      <ComposedChart data={trendData} margin={{ bottom: 20 }}>
+                        <defs>
+                          <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.4} /><stop offset="95%" stopColor="#f97316" stopOpacity={0} /></linearGradient>
+                          <linearGradient id="colorDimmer" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} /><stop offset="95%" stopColor="#ef4444" stopOpacity={0} /></linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} opacity={0.5} />
+                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis yAxisId="left" stroke="#f97316" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[25, 50]} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#ef4444" fontSize={10} tickLine={false} axisLine={false} dx={10} domain={[0, 100]} />
+                        <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
+                        <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
+                        
+                        <ReferenceArea yAxisId="left" y1={targetTempMin} y2={targetTempMax} fill="#f97316" fillOpacity={0.15} />
+                        <ReferenceLine yAxisId="left" y={targetTempMax} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "MAX", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
+                        <ReferenceLine yAxisId="left" y={targetTempMin} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideBottomLeft", value: "MIN", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
+                        
+                        <Area yAxisId="left" type="monotone" dataKey="temperature" name="Suhu (PV)" stroke="#f97316" strokeWidth={3} fill="url(#colorTemp)" isAnimationActive={false} />
+                        <Area yAxisId="right" type="monotone" dataKey="dimmer" name="PWM Heater" stroke="#ef4444" strokeWidth={2} fill="url(#colorDimmer)" isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
-                {/* GRAFIK 2 (KANAN): MOTOR VERIFICATION */}
-                <div className="bg-white dark:bg-slate-900/50 p-8 rounded-[2.5rem] border border-slate-200 dark:border-white/5 shadow-xl shadow-black/5">
-                  <h3 className="text-lg font-black mb-1 uppercase tracking-tighter text-indigo-500">Master: Motor Performance</h3>
-                  <p className="text-xs text-slate-500 mb-8 font-bold">RPM Speed: Mikro (Solid) vs Python (Dashed)</p>
-                  <div className="h-[300px]">
+                {/* GRAFIK 2: MOTOR (ANALOG PID) */}
+                <div className="bg-gradient-to-br from-white via-white to-purple-50/30 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-purple-900/10 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-3xl p-6 shadow-2xl shadow-slate-300/30 dark:shadow-purple-500/5 hover:shadow-purple-200/40 dark:hover:shadow-purple-500/10 transition-all duration-500">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                      <div className="p-2 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg shadow-lg shadow-purple-500/30">
+                        <Gauge size={18} className="text-white" />
+                      </div>
+                      Motor Speed (Analog PID)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Kurva osilasi (Damped Sine Wave) menuju zona rata-rata RPM.</p>
+                  <div className="h-[280px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={trendData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.05}/>
-                        <XAxis dataKey="time" fontSize={10} tickLine={false} />
-                        <YAxis fontSize={10} />
-                        <Tooltip contentStyle={{borderRadius:'15px', border:'none', background:'#0f172a', color:'#fff'}}/>
-                        <Legend verticalAlign="top" align="right"/>
-                        <Line type="monotone" dataKey="rpm_mikro" name="RPM Mikro" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false}/>
-                        <Line type="monotone" dataKey="rpm_python" name="RPM Python" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 5" dot={false} isAnimationActive={false}/>
+                      <ComposedChart data={trendData} margin={{ bottom: 20 }}>
+                        <defs>
+                          <linearGradient id="colorRpm" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a855f7" stopOpacity={0.4} /><stop offset="95%" stopColor="#a855f7" stopOpacity={0} /></linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} opacity={0.5} />
+                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#a855f7" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 'dataMax + 50']} />
+                        <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
+                        <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
+                        
+                        <ReferenceLine y={targetRpm} stroke="#9333ea" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "SETPOINT", fill: "#9333ea", fontSize: 10, fontWeight: "bold" }} />
+                        
+                        <Line type="monotone" dataKey="rpm" name="RPM (PV)" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
@@ -199,39 +509,95 @@ export default function IndustrialInformaticsDashboard() {
             </div>
           )}
 
+          {/* TAB 2: DATA & LOGS */}
           {activeTab === "logs" && (
-            <div className="bg-white dark:bg-slate-900/50 p-8 rounded-[2.5rem] border border-slate-200 dark:border-white/5 animate-in slide-in-from-bottom-5 duration-500">
-              <div className="flex justify-between items-center mb-8">
-                <h3 className="text-xl font-black uppercase tracking-tighter text-emerald-500">Master-Slave Records</h3>
-                <div className="flex gap-3">
-                  <button onClick={exportThermalCSV} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-orange-500/20 hover:scale-95 transition-all"><Download size={14} className="inline mr-2"/> Thermal CSV</button>
-                  <button onClick={exportMotorCSV} className="bg-indigo-500 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:scale-95 transition-all"><Download size={14} className="inline mr-2"/> Motor CSV</button>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-500">
+              
+              <div className="flex flex-col gap-6">
+                
+                {/* Tabel 1: Thermal Control */}
+                <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[400px]">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2"><Thermometer size={20} className="text-orange-500" /> Log Thermal Control</h3>
+                    <div className="flex gap-2 items-center">
+                      <select value={viewingBatchId} onChange={(e) => setViewingBatchId(e.target.value)} className="text-xs bg-slate-50 dark:bg-slate-800/80 px-3 py-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/10 outline-none text-slate-700 dark:text-slate-300 font-bold cursor-pointer">
+                        <option value="current">🟢 Current ({batchId})</option>
+                        {pastBatches.map(b => (<option key={b.id} value={b.id}>📁 History ({b.id})</option>))}
+                      </select>
+                      <button onClick={exportThermalCSV} className="text-xs flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/20 px-4 py-2 rounded-xl hover:bg-emerald-100 transition font-bold text-emerald-600"><Download size={14} /> CSV Thermal</button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl relative">
+                    <table className="w-full text-left border-collapse min-w-[340px]">
+                      <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
+                        <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs">
+                          <th className="p-3 font-semibold">Suhu (°C)</th>
+                          <th className="p-3 font-semibold">Set Point</th>
+                          <th className="p-3 font-semibold">PWM Heater</th>
+                          <th className="p-3 font-semibold">Waktu</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...displayTableData].reverse().map((row, i) => (
+                          <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm">
+                            <td className="p-3">{row.temperature.toFixed(2)}</td>
+                            <td className="p-3 font-mono text-xs">{row.setPointTemp || `${targetTempMin}-${targetTempMax}`}</td>
+                            <td className="p-3">{row.dimmer.toFixed(0)}</td>
+                            <td className="p-3 font-mono text-xs">{row.time}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Tabel 2: Motor Control */}
+                <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-[400px]">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2"><Gauge size={20} className="text-purple-500" /> Log Motor Control</h3>
+                    <button onClick={exportMotorCSV} className="text-xs flex items-center gap-1 bg-purple-50 dark:bg-purple-500/20 px-4 py-2 rounded-xl hover:bg-purple-100 transition font-bold text-purple-600"><Download size={14} /> CSV Motor</button>
+                  </div>
+                  <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl relative">
+                    <table className="w-full text-left border-collapse min-w-[280px]">
+                      <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
+                        <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs">
+                          <th className="p-3 font-semibold">RPM</th>
+                          <th className="p-3 font-semibold">Set Point</th>
+                          <th className="p-3 font-semibold">Waktu</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...displayTableData].reverse().map((row, i) => (
+                          <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm">
+                            <td className="p-3">{row.rpm.toFixed(0)}</td>
+                            <td className="p-3 font-mono text-xs">{row.setPointRpm || targetRpm}</td>
+                            <td className="p-3 font-mono text-xs">{row.time}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-              <div className="overflow-auto max-h-[500px] scrollbar-hide">
-                <table className="w-full text-left text-sm uppercase tracking-widest">
-                  <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0 opacity-50 z-10 font-black">
-                    <tr className="border-b border-slate-200 dark:border-slate-700">
-                      <th className="p-5">Waktu</th>
-                      <th className="p-5">Suhu (S)</th>
-                      <th className="p-5">Heater M (S)</th>
-                      <th className="p-5">RPM M (M)</th>
-                      <th className="p-5">RPM PY (V)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...trendData].reverse().map((row, i) => (
-                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
-                        <td className="p-5 font-mono text-[11px] opacity-40">{row.time}</td>
-                        <td className="p-5 font-black text-orange-500">{row.suhu.toFixed(1)}°</td>
-                        <td className="p-5 font-bold">{row.pwr_heater_mikro.toFixed(0)}%</td>
-                        <td className="p-5 font-black text-indigo-500">{row.rpm_mikro.toFixed(0)}</td>
-                        <td className="p-5 italic opacity-60 font-medium">{row.rpm_python.toFixed(1)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+              <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-full lg:h-[824px]">
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2"><ShieldAlert size={20} className={isEStop ? "text-rose-500 animate-pulse" : "text-emerald-500"} /> System & Fuzzy Logs</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Log intervensi kontrol & Diagram Alir K3.</p>
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                  {alarms.map((alarm, index) => (
+                    <div key={`${alarm.id}-${index}`} className={`p-4 rounded-2xl ring-1 ${alarm.type === "CRITICAL" ? "bg-rose-50 dark:bg-rose-500/10 ring-rose-200 dark:ring-rose-500/30" : alarm.type === "SUCCESS" ? "bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 dark:ring-emerald-500/30" : "bg-slate-50 dark:bg-slate-800/40 ring-slate-100 dark:ring-white/5"}`}>
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-bold tracking-wider ${alarm.type === "WARNING" ? "text-amber-600" : alarm.type === "CRITICAL" ? "text-rose-600" : alarm.type === "SUCCESS" ? "text-emerald-600" : "text-blue-600"}`}>{alarm.type}</span>
+                        </div>
+                        <span className="text-xs font-mono text-slate-400">{alarm.time}</span>
+                      </div>
+                      <p className={`text-sm leading-relaxed ${alarm.type === "CRITICAL" ? "text-rose-700 font-medium" : alarm.type === "SUCCESS" ? "text-emerald-700 font-medium dark:text-emerald-400" : "text-slate-600 dark:text-slate-300"}`}>{alarm.message}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
+
             </div>
           )}
         </main>
@@ -240,17 +606,26 @@ export default function IndustrialInformaticsDashboard() {
   );
 }
 
-function KPICard({ title, value, unit, icon, color }: any) {
+function GradientCard({ title, value, unit, icon, color, alert = false }: any) {
   return (
-    <div className="bg-white dark:bg-slate-900/50 p-6 rounded-[2rem] border border-slate-200 dark:border-white/5 shadow-xl shadow-black/5 transition-all hover:-translate-y-1">
-      <div className="flex justify-between mb-4">
-        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</span>
-        <div className={`p-2.5 rounded-2xl bg-gradient-to-br ${color} text-white shadow-lg`}>{icon}</div>
+    <div className={`relative overflow-hidden bg-gradient-to-br from-white via-white to-slate-50/80 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-slate-800/40 backdrop-blur-md p-6 rounded-3xl border transition-all duration-500 hover:-translate-y-2 hover:scale-[1.02] group ${alert ? "border-rose-400 dark:border-rose-500/50 shadow-2xl shadow-rose-500/20 dark:shadow-rose-500/30 ring-2 ring-rose-400/30" : "border-slate-200/80 dark:border-white/10 shadow-xl shadow-slate-300/30 dark:shadow-none hover:shadow-2xl hover:shadow-slate-400/30 dark:hover:shadow-emerald-500/10"}`}>
+      <div className={`absolute -right-10 -top-10 w-40 h-40 bg-gradient-to-br ${color} opacity-10 dark:opacity-20 rounded-full blur-3xl group-hover:opacity-20 dark:group-hover:opacity-30 group-hover:scale-110 transition-all duration-700`}></div>
+      <div className="relative z-10 flex justify-between items-start mb-4">
+        <span className="text-sm font-semibold text-slate-600 dark:text-slate-400">{title}</span>
+        <div className={`p-3 rounded-xl bg-gradient-to-br ${color} text-white shadow-xl group-hover:scale-110 group-hover:rotate-3 transition-all duration-300`}>{icon}</div>
       </div>
-      <div className="flex items-baseline gap-1">
-        <h3 className="text-4xl font-black tracking-tighter">{value}</h3>
-        <span className="text-slate-400 text-[10px] font-black italic">{unit}</span>
+      <div className="relative z-10 flex items-baseline gap-2">
+        <h3 className={`text-4xl font-extrabold tracking-tight transition-all duration-300 ${alert ? "text-rose-600 dark:text-rose-400 animate-pulse" : "text-slate-800 dark:text-white group-hover:scale-105"}`}>{value}</h3>
+        <span className="text-lg font-medium text-slate-400 dark:text-slate-500">{unit}</span>
       </div>
+      {alert && (
+        <div className="absolute top-3 left-3 z-20">
+          <div className="flex items-center gap-1 bg-rose-500 text-white text-[10px] font-bold px-2 py-1 rounded-full shadow-lg animate-pulse">
+            <AlertTriangle size={12} />
+            ALERT
+          </div>
+        </div>
+      )}
     </div>
   );
 }
