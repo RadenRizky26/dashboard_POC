@@ -310,10 +310,11 @@ export default function FuzzyPIDDashboard() {
               </div>
 
               {/* KPI Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                 <GradientCard title="Suhu Aktual (PV)" value={metrics.temp.toFixed(1)} unit="°C" icon={<Thermometer size={24} />} color="from-orange-400 via-orange-500 to-orange-600 dark:from-orange-500 dark:to-red-600" alert={metrics.temp > targetTempMax + 5} />
                 <GradientCard title="PWM Heater" value={metrics.dimmer.toFixed(0)} unit="%" icon={<Zap size={24} />} color="from-yellow-400 via-amber-500 to-amber-600 dark:from-yellow-500 dark:to-orange-600" />
                 <GradientCard title="Kecepatan (PV)" value={metrics.rpm.toFixed(0)} unit="RPM" icon={<Gauge size={24} />} color="from-purple-500 via-purple-600 to-purple-700 dark:from-indigo-500 dark:to-purple-600" alert={metrics.rpm > targetRpm + 20} />
+                <GradientCard title="PWM Motor" value={metrics.motorPower.toFixed(0)} unit="%" icon={<Zap size={24} />} color="from-indigo-400 via-indigo-500 to-indigo-600 dark:from-indigo-500 dark:to-indigo-700" />
                 <GradientCard title="PH Aktual" value={metrics.ph.toFixed(2)} unit="pH" icon={<FlaskConical size={24} />} color="from-cyan-400 via-teal-500 to-emerald-600 dark:from-cyan-500 dark:to-emerald-600" alert={metrics.ph < 6.5 || metrics.ph > 8.5} />
               </div>
 
@@ -372,16 +373,19 @@ export default function FuzzyPIDDashboard() {
                       <ComposedChart data={trendData} margin={{ bottom: 20 }}>
                         <defs>
                           <linearGradient id="colorRpm" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a855f7" stopOpacity={0.4} /><stop offset="95%" stopColor="#a855f7" stopOpacity={0} /></linearGradient>
+                          <linearGradient id="colorMotorPower" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} /><stop offset="95%" stopColor="#6366f1" stopOpacity={0} /></linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} opacity={0.5} />
                         <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#a855f7" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 'dataMax + 50']} />
+                        <YAxis yAxisId="left" stroke="#a855f7" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 'dataMax + 50']} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#6366f1" fontSize={10} tickLine={false} axisLine={false} dx={10} domain={[0, 100]} />
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
                         <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
                         
-                        <ReferenceLine y={targetRpm} stroke="#9333ea" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "SETPOINT", fill: "#9333ea", fontSize: 10, fontWeight: "bold" }} />
+                        <ReferenceLine yAxisId="left" y={targetRpm} stroke="#9333ea" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "SETPOINT", fill: "#9333ea", fontSize: 10, fontWeight: "bold" }} />
                         
-                        <Line type="monotone" dataKey="rpm" name="RPM (PV)" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} isAnimationActive={false} />
+                        <Line yAxisId="left" type="monotone" dataKey="rpm" name="RPM (PV)" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} isAnimationActive={false} />
+                        <Area yAxisId="right" type="monotone" dataKey="motorPower" name="PWM Motor" stroke="#6366f1" strokeWidth={2} fill="url(#colorMotorPower)" isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
