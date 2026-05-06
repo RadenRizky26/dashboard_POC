@@ -4,7 +4,7 @@ import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Respon
 import { AlertTriangle, Activity, Zap, Thermometer, Gauge, ShieldAlert, Settings2, Sun, Moon, Wifi, FlaskConical, Download, SlidersHorizontal, ClipboardList, Power, WifiOff } from "lucide-react";
 
 // --- Types ---
-interface ProcessData { time: string; temperature: number; dimmer: number; rpm: number; ph: number; setPointTemp?: string; setPointRpm?: number; }
+interface ProcessData { time: string; temperature: number; dimmer: number; rpm: number; motorPower: number; ph: number; setPointTemp?: string; setPointRpm?: number; }
 interface AlarmLog { id: string; time: string; type: "WARNING" | "INFO" | "CRITICAL" | "SUCCESS"; message: string; }
 interface BatchHistory { id: string; data: ProcessData[]; }
 interface FirebaseData { slave: { suhu: number; heaterPower: number; ph: number; }; master: { rpm: number; motorPower: number; }; }
@@ -33,7 +33,7 @@ export default function FuzzyPIDDashboard() {
     { id: "1", time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Dashboard siap. Klik START DISPLAY untuk mulai merekam data real-time dari sistem yang sedang berjalan." } as AlarmLog,
   ]);
 
-  const [metrics, setMetrics] = useState({ temp: 28.5, dimmer: 0, rpm: 0, ph: 7.0 });
+  const [metrics, setMetrics] = useState({ temp: 28.5, dimmer: 0, rpm: 0, motorPower: 0, ph: 7.0 });
   const [realTimeData, setRealTimeData] = useState<FirebaseData | null>(null);
 
   useEffect(() => {
@@ -87,7 +87,7 @@ export default function FuzzyPIDDashboard() {
     setTrendData([]); 
     setViewingBatchId("current"); 
     setDisplayActive(false);
-    setMetrics({ temp: 28.5, dimmer: 0, rpm: 0, ph: 7.0 });
+    setMetrics({ temp: 28.5, dimmer: 0, rpm: 0, motorPower: 0, ph: 7.0 });
     setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Batch baru dimulai: ${newId}.` } as AlarmLog, ...prev].slice(0, 50));
   };
 
@@ -107,8 +107,8 @@ export default function FuzzyPIDDashboard() {
   const exportMotorCSV = () => {
     const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
     if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
-    const headers = "RPM Aktual;Set Point RPM;Waktu\n";
-    const csvData = dataToExport.map(row => `${row.rpm.toFixed(0)};${row.setPointRpm || targetRpm};${row.time}`).join("\n");
+    const headers = "RPM Aktual;Set Point RPM;PWM Motor;Waktu\n";
+    const csvData = dataToExport.map(row => `${row.rpm.toFixed(0)};${row.setPointRpm || targetRpm};${row.motorPower.toFixed(0)};${row.time}`).join("\n");
     const blob = new Blob([headers + csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -131,6 +131,7 @@ export default function FuzzyPIDDashboard() {
           temp: realTimeData.slave.suhu,
           dimmer: realTimeData.slave.heaterPower,
           rpm: realTimeData.master.rpm,
+          motorPower: realTimeData.master.motorPower,
           ph: realTimeData.slave.ph
         };
 
@@ -145,6 +146,7 @@ export default function FuzzyPIDDashboard() {
               temperature: newMetrics.temp,
               dimmer: newMetrics.dimmer,
               rpm: newMetrics.rpm,
+              motorPower: newMetrics.motorPower,
               ph: newMetrics.ph,
               setPointTemp: `${targetTempMin}-${targetTempMax}`,
               setPointRpm: targetRpm
