@@ -41,7 +41,8 @@ def get_data():
             "data": {
                 "slave": {
                     "suhu": slave.get('suhu', 0.0),
-                    "heaterPower": slave.get('heaterPower', 0.0)
+                    "heaterPower": slave.get('heaterPower', 0.0),
+                    "ph": slave.get('ph', 7.0)
                 },
                 "master": {
                     "rpm": master.get('rpm', 0.0),

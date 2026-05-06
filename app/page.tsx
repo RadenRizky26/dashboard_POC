@@ -1,31 +1,28 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, Legend } from "recharts";
-import { AlertTriangle, CheckCircle2, Activity, Database, Clock, Zap, Thermometer, Gauge, ShieldAlert, Settings2, Sun, Moon, Wifi, FlaskConical, Download, AlertOctagon, SlidersHorizontal, ClipboardList, TableProperties, Power, CalendarCheck, WifiOff } from "lucide-react";
+import { AlertTriangle, Activity, Zap, Thermometer, Gauge, ShieldAlert, Settings2, Sun, Moon, Wifi, FlaskConical, Download, SlidersHorizontal, ClipboardList, Power, WifiOff } from "lucide-react";
 
 // --- Types ---
-interface ProcessData { time: string; temperature: number; dimmer: number; rpm: number; days: number; setPointTemp?: string; setPointRpm?: number; }
+interface ProcessData { time: string; temperature: number; dimmer: number; rpm: number; ph: number; setPointTemp?: string; setPointRpm?: number; }
 interface AlarmLog { id: string; time: string; type: "WARNING" | "INFO" | "CRITICAL" | "SUCCESS"; message: string; }
 interface BatchHistory { id: string; data: ProcessData[]; }
-interface FirebaseData { slave: { suhu: number; heaterPower: number; }; master: { rpm: number; motorPower: number; }; }
+interface FirebaseData { slave: { suhu: number; heaterPower: number; ph: number; }; master: { rpm: number; motorPower: number; }; }
 
-type ProcessState = "IDLE" | "RUNNING" | "COMPLETED";
+
 
 export default function FuzzyPIDDashboard() {
   const [isClient, setIsClient] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState<"control" | "logs">("control");
 
-  const [processState, setProcessState] = useState<ProcessState>("IDLE");
-  const [isEStop, setIsEStop] = useState(false);
+  const [displayActive, setDisplayActive] = useState(false); // Dashboard display state (not hardware control)
   const [isOnline, setIsOnline] = useState(true);
   const [apiStatus, setApiStatus] = useState<"connected" | "disconnected" | "error">("disconnected");
   
-  // Setpoints Menggunakan Rentang (Min & Max) untuk Suhu, dan Setpoint untuk RPM
   const [targetTempMin, setTargetTempMin] = useState<number>(38);
   const [targetTempMax, setTargetTempMax] = useState<number>(42);
-  const [targetRpm, setTargetRpm] = useState<number>(120);
-  const TARGET_DAYS = 14; 
+  const [targetRpm, setTargetRpm] = useState<number>(120); 
 
   const [batchId, setBatchId] = useState<string>("PRD-Kopi-01");
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
@@ -33,12 +30,11 @@ export default function FuzzyPIDDashboard() {
   const [viewingBatchId, setViewingBatchId] = useState<string>("current");
 
   const [alarms, setAlarms] = useState<AlarmLog[]>([
-    { id: "1", time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Inisialisasi Sistem Hardware Selesai. Menunggu perintah..." } as AlarmLog,
+    { id: "1", time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Dashboard siap. Klik START DISPLAY untuk mulai merekam data real-time dari sistem yang sedang berjalan." } as AlarmLog,
   ]);
 
-  const [metrics, setMetrics] = useState({ temp: 28.5, dimmer: 0, rpm: 0, days: 0 });
+  const [metrics, setMetrics] = useState({ temp: 28.5, dimmer: 0, rpm: 0, ph: 7.0 });
   const [realTimeData, setRealTimeData] = useState<FirebaseData | null>(null);
-  const rpmVelocity = useRef(0);
 
   useEffect(() => {
     setIsClient(true);
@@ -75,24 +71,12 @@ export default function FuzzyPIDDashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const toggleEStop = () => {
-    setIsEStop(!isEStop);
-    if (!isEStop) {
-      setProcessState("IDLE");
-      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "CRITICAL", message: "EMERGENCY STOP! Semua Aktuator Dimatikan Paksa." } as AlarmLog, ...prev].slice(0, 50));
+  const handleDisplayToggle = () => {
+    setDisplayActive(!displayActive);
+    if (!displayActive) {
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Dashboard mulai menampilkan data real-time dari sistem yang sedang berjalan.` } as AlarmLog, ...prev].slice(0, 50));
     } else {
-      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "E-Stop di-reset. Sistem Standby." } as AlarmLog, ...prev].slice(0, 50));
-    }
-  };
-
-  const handleStartStop = () => {
-    if (processState === "IDLE" || processState === "COMPLETED") {
-      setProcessState("RUNNING");
-      setMetrics(prev => ({ ...prev, days: 0 }));
-      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Sistem Aktif. Menjaga Suhu (${targetTempMin}-${targetTempMax}°C) & Motor (${targetRpm} RPM).` } as AlarmLog, ...prev].slice(0, 50));
-    } else {
-      setProcessState("IDLE");
-      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "WARNING", message: "Proses dihentikan manual oleh user." } as AlarmLog, ...prev].slice(0, 50));
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Dashboard berhenti merekam data. Sistem hardware tetap berjalan normal." } as AlarmLog, ...prev].slice(0, 50));
     }
   };
 
@@ -102,8 +86,8 @@ export default function FuzzyPIDDashboard() {
     setBatchId(newId);
     setTrendData([]); 
     setViewingBatchId("current"); 
-    setProcessState("IDLE");
-    setMetrics({ temp: 28.5, dimmer: 0, rpm: 0, days: 0 });
+    setDisplayActive(false);
+    setMetrics({ temp: 28.5, dimmer: 0, rpm: 0, ph: 7.0 });
     setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Batch baru dimulai: ${newId}.` } as AlarmLog, ...prev].slice(0, 50));
   };
 
@@ -135,6 +119,7 @@ export default function FuzzyPIDDashboard() {
 
   // ==========================================
   // HANYA MENGAMBIL DAN MENAMPILKAN DATA DARI BACKEND
+  // DASHBOARD TIDAK MENGONTROL HARDWARE - HANYA MONITORING
   // ==========================================
   useEffect(() => {
     const interval = setInterval(() => {
@@ -146,21 +131,21 @@ export default function FuzzyPIDDashboard() {
           temp: realTimeData.slave.suhu,
           dimmer: realTimeData.slave.heaterPower,
           rpm: realTimeData.master.rpm,
-          days: metrics.days
+          ph: realTimeData.slave.ph
         };
 
-        // Update metrics dengan data dari backend
+        // Update metrics dengan data dari backend (selalu update, tidak peduli displayActive)
         setMetrics(newMetrics);
 
-        // Tambahkan ke trend data untuk grafik (hanya saat RUNNING)
-        if (processState === "RUNNING") {
+        // Tambahkan ke trend data untuk grafik (hanya saat displayActive = true)
+        if (displayActive) {
           setTrendData(prevTrend => {
             const newDataPoint = {
               time: nowStr,
               temperature: newMetrics.temp,
               dimmer: newMetrics.dimmer,
               rpm: newMetrics.rpm,
-              days: newMetrics.days,
+              ph: newMetrics.ph,
               setPointTemp: `${targetTempMin}-${targetTempMax}`,
               setPointRpm: targetRpm
             };
@@ -170,36 +155,19 @@ export default function FuzzyPIDDashboard() {
             return updatedTrend.length > 100 ? updatedTrend.slice(-100) : updatedTrend;
           });
 
-          // Update days counter
-          setMetrics(prev => ({
-            ...prev,
-            days: prev.days + 0.5
-          }));
-
-          // Check if process completed
-          if (newMetrics.days >= TARGET_DAYS) {
-            setProcessState("COMPLETED");
-            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: "PROSES SELESAI: Target 14 Hari tercapai." } as AlarmLog, ...a].slice(0, 50));
-          }
-
           // Logging periodik
           if (Math.random() > 0.95) {
-            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "INFO", message: `Data Update: Suhu ${newMetrics.temp.toFixed(1)}°C | PWM ${newMetrics.dimmer.toFixed(0)}% | RPM ${newMetrics.rpm.toFixed(0)}` } as AlarmLog, ...a].slice(0, 50));
+            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "INFO", message: `Data Update: Suhu ${newMetrics.temp.toFixed(1)}°C | PWM ${newMetrics.dimmer.toFixed(0)}% | RPM ${newMetrics.rpm.toFixed(0)} | PH ${newMetrics.ph.toFixed(2)}` } as AlarmLog, ...a].slice(0, 50));
           }
-        }
-
-        // Handle E-Stop - hanya reset display
-        if (isEStop && processState === "RUNNING") {
-          setProcessState("IDLE");
         }
 
         // Check critical temperature (warning saja, tidak mengubah data)
-        if (newMetrics.temp >= 50 && processState === "RUNNING" && !isEStop) {
+        if (newMetrics.temp >= 50 && displayActive) {
           setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "CRITICAL", message: `PERINGATAN: Suhu Kritis (${newMetrics.temp.toFixed(1)}°C)!` } as AlarmLog, ...a].slice(0, 50));
         }
       } else {
         // Jika API tidak tersedia, tampilkan pesan
-        if (processState === "RUNNING") {
+        if (displayActive) {
           setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "WARNING", message: "Backend tidak terhubung. Menunggu koneksi..." } as AlarmLog, ...a].slice(0, 50));
         }
       }
@@ -207,7 +175,7 @@ export default function FuzzyPIDDashboard() {
     }, 1500);
 
     return () => clearInterval(interval);
-  }, [processState, isEStop, targetTempMin, targetTempMax, targetRpm, realTimeData, apiStatus, metrics.days]);
+  }, [displayActive, targetTempMin, targetTempMax, targetRpm, realTimeData, apiStatus]);
 
   if (!isClient) return null;
 
@@ -271,7 +239,7 @@ export default function FuzzyPIDDashboard() {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 border-b border-slate-200/60 dark:border-white/10 pb-6">
             <div>
               <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 transition-colors">Advanced <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-500">HMI Dashboard</span></h2>
-              <p className="text-slate-500 dark:text-slate-400 transition-colors">Monitoring Kontrol Fuzzy Logic & Analog PID berdasarkan Rentang (Band).</p>
+              <p className="text-slate-500 dark:text-slate-400 transition-colors">Monitoring Real-time Data dari Sistem Fuzzy Logic & Analog PID (Display Only - Tidak Mengontrol Hardware).</p>
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 bg-gradient-to-br from-white to-slate-50 dark:from-slate-800/80 dark:to-slate-800/50 p-3 rounded-2xl ring-1 ring-slate-200/80 dark:ring-white/10 shadow-lg shadow-slate-200/50 dark:shadow-none backdrop-blur-sm">
@@ -280,20 +248,17 @@ export default function FuzzyPIDDashboard() {
                   <span className="font-mono font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-400 text-sm">{batchId}</span>
                 </div>
                 <div className="flex space-x-1 border-l border-slate-300 dark:border-white/10 pl-2">
-                    <button onClick={startNewBatch} disabled={processState === "RUNNING"} className="text-xs font-bold bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-3 py-2 rounded-lg hover:from-emerald-400 hover:to-emerald-500 disabled:opacity-50 transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/30 whitespace-nowrap">
+                    <button onClick={startNewBatch} disabled={displayActive} className="text-xs font-bold bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-3 py-2 rounded-lg hover:from-emerald-400 hover:to-emerald-500 disabled:opacity-50 transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/30 whitespace-nowrap">
                         + Tambah
                     </button>
                     <button onClick={() => {
                         const newId = prompt("Masukkan ID Batch Baru:", batchId);
                         if (newId && newId.trim() !== "") setBatchId(newId.trim());
-                    }} disabled={processState === "RUNNING"} className="text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-3 py-2 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-all duration-300 whitespace-nowrap">
+                    }} disabled={displayActive} className="text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-3 py-2 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 transition-all duration-300 whitespace-nowrap">
                         ✎ Ganti
                     </button>
                 </div>
               </div>
-              <button onClick={toggleEStop} className={`p-3 px-8 rounded-2xl font-black tracking-widest flex items-center gap-2 transition-all duration-300 active:scale-95 shadow-xl ${isEStop ? "bg-gradient-to-r from-rose-600 to-rose-700 text-white shadow-rose-500/40 animate-pulse" : "bg-gradient-to-r from-rose-50 to-rose-100 dark:from-rose-500/10 dark:to-rose-600/10 text-rose-600 dark:text-rose-500 ring-2 ring-rose-500/50 hover:from-rose-600 hover:to-rose-700 hover:text-white"}`}>
-                <AlertOctagon size={20} /> {isEStop ? "RESET E-STOP" : "E-STOP"}
-              </button>
             </div>
           </div>
 
@@ -313,9 +278,9 @@ export default function FuzzyPIDDashboard() {
                   <div className="flex flex-col w-full">
                     <span className="text-[10px] uppercase tracking-widest text-orange-600/80 dark:text-orange-400/80 font-bold">Rentang Suhu (°C)</span>
                     <div className="flex items-center gap-2 mt-1">
-                      <input type="number" value={targetTempMin} onChange={(e) => setTargetTempMin(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-16 bg-white/60 dark:bg-slate-800/60 border-b-2 border-orange-300 dark:border-orange-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-orange-500 transition-colors rounded-t-lg px-1" />
+                      <input type="number" value={targetTempMin} onChange={(e) => setTargetTempMin(Number(e.target.value))} disabled={displayActive} className="w-16 bg-white/60 dark:bg-slate-800/60 border-b-2 border-orange-300 dark:border-orange-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-orange-500 transition-colors rounded-t-lg px-1" />
                       <span className="text-orange-400 dark:text-orange-500 font-bold text-lg">-</span>
-                      <input type="number" value={targetTempMax} onChange={(e) => setTargetTempMax(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-16 bg-white/60 dark:bg-slate-800/60 border-b-2 border-orange-300 dark:border-orange-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-orange-500 transition-colors rounded-t-lg px-1" />
+                      <input type="number" value={targetTempMax} onChange={(e) => setTargetTempMax(Number(e.target.value))} disabled={displayActive} className="w-16 bg-white/60 dark:bg-slate-800/60 border-b-2 border-orange-300 dark:border-orange-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-orange-500 transition-colors rounded-t-lg px-1" />
                     </div>
                   </div>
                 </div>
@@ -325,20 +290,20 @@ export default function FuzzyPIDDashboard() {
                   <div className="flex flex-col w-full">
                     <span className="text-[10px] uppercase tracking-widest text-purple-600/80 dark:text-purple-400/80 font-bold">Setpoint Motor (RPM)</span>
                     <div className="flex items-center gap-2 mt-1">
-                      <input type="number" value={targetRpm} onChange={(e) => setTargetRpm(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-24 bg-white/60 dark:bg-slate-800/60 border-b-2 border-purple-300 dark:border-purple-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-purple-500 transition-colors rounded-t-lg px-1" />
+                      <input type="number" value={targetRpm} onChange={(e) => setTargetRpm(Number(e.target.value))} disabled={displayActive} className="w-24 bg-white/60 dark:bg-slate-800/60 border-b-2 border-purple-300 dark:border-purple-500/50 outline-none text-lg font-bold text-slate-800 dark:text-white text-center disabled:opacity-50 focus:border-purple-500 transition-colors rounded-t-lg px-1" />
                     </div>
                   </div>
                 </div>
                 
                 <button 
-                  onClick={handleStartStop} disabled={isEStop}
-                  className={`px-10 py-5 rounded-2xl font-black tracking-widest flex items-center justify-center gap-3 transition-all duration-300 active:scale-95 disabled:opacity-50 shadow-2xl ${
-                    processState === "IDLE" || processState === "COMPLETED"
+                  onClick={handleDisplayToggle}
+                  className={`px-10 py-5 rounded-2xl font-black tracking-widest flex items-center justify-center gap-3 transition-all duration-300 active:scale-95 shadow-2xl ${
+                    !displayActive
                       ? "bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 text-white shadow-emerald-500/40 hover:from-emerald-400 hover:via-emerald-500 hover:to-teal-500" 
                       : "bg-gradient-to-r from-rose-100 to-rose-200 dark:from-rose-500/20 dark:to-rose-600/20 text-rose-600 dark:text-rose-400 hover:from-rose-600 hover:to-rose-700 hover:text-white ring-2 ring-rose-500/50"
                   }`}
                 >
-                  <Power size={24} /> {processState === "IDLE" || processState === "COMPLETED" ? "START SYSTEM" : "STOP SYSTEM"}
+                  <Power size={24} /> {!displayActive ? "START DISPLAY" : "STOP DISPLAY"}
                 </button>
               </div>
 
@@ -347,7 +312,7 @@ export default function FuzzyPIDDashboard() {
                 <GradientCard title="Suhu Aktual (PV)" value={metrics.temp.toFixed(1)} unit="°C" icon={<Thermometer size={24} />} color="from-orange-400 via-orange-500 to-orange-600 dark:from-orange-500 dark:to-red-600" alert={metrics.temp > targetTempMax + 5} />
                 <GradientCard title="PWM Heater" value={metrics.dimmer.toFixed(0)} unit="%" icon={<Zap size={24} />} color="from-yellow-400 via-amber-500 to-amber-600 dark:from-yellow-500 dark:to-orange-600" />
                 <GradientCard title="Kecepatan (PV)" value={metrics.rpm.toFixed(0)} unit="RPM" icon={<Gauge size={24} />} color="from-purple-500 via-purple-600 to-purple-700 dark:from-indigo-500 dark:to-purple-600" alert={metrics.rpm > targetRpm + 20} />
-                <GradientCard title="Waktu Proses" value={Math.floor(metrics.days)} unit={`/ ${TARGET_DAYS} Hari`} icon={<Clock size={24} />} color="from-blue-400 via-blue-500 to-blue-600 dark:from-blue-500 dark:to-cyan-600" />
+                <GradientCard title="PH Aktual" value={metrics.ph.toFixed(2)} unit="pH" icon={<FlaskConical size={24} />} color="from-cyan-400 via-teal-500 to-emerald-600 dark:from-cyan-500 dark:to-emerald-600" alert={metrics.ph < 6.5 || metrics.ph > 8.5} />
               </div>
 
               {/* GRID GRAFIK (SPLIT) */}
@@ -496,7 +461,7 @@ export default function FuzzyPIDDashboard() {
               </div>
 
               <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-lg shadow-slate-200/40 dark:shadow-none flex flex-col h-full lg:h-[824px]">
-                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2"><ShieldAlert size={20} className={isEStop ? "text-rose-500 animate-pulse" : "text-emerald-500"} /> System & Fuzzy Logs</h3>
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2"><ShieldAlert size={20} className="text-emerald-500" /> System & Fuzzy Logs</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Log intervensi kontrol & Diagram Alir K3.</p>
                 <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
                   {alarms.map((alarm, index) => (
