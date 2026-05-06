@@ -444,11 +444,12 @@ export default function FuzzyPIDDashboard() {
                     <button onClick={exportMotorCSV} className="text-xs flex items-center gap-1 bg-purple-50 dark:bg-purple-500/20 px-4 py-2 rounded-xl hover:bg-purple-100 transition font-bold text-purple-600"><Download size={14} /> CSV Motor</button>
                   </div>
                   <div className="flex-1 overflow-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-xl relative">
-                    <table className="w-full text-left border-collapse min-w-[280px]">
+                    <table className="w-full text-left border-collapse min-w-[340px]">
                       <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0 backdrop-blur-md z-10">
                         <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs">
                           <th className="p-3 font-semibold">RPM</th>
                           <th className="p-3 font-semibold">Set Point</th>
+                          <th className="p-3 font-semibold">PWM Motor</th>
                           <th className="p-3 font-semibold">Waktu</th>
                         </tr>
                       </thead>
@@ -457,6 +458,7 @@ export default function FuzzyPIDDashboard() {
                           <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm">
                             <td className="p-3">{row.rpm.toFixed(0)}</td>
                             <td className="p-3 font-mono text-xs">{row.setPointRpm || targetRpm}</td>
+                            <td className="p-3">{row.motorPower.toFixed(0)}</td>
                             <td className="p-3 font-mono text-xs">{row.time}</td>
                           </tr>
                         ))}
