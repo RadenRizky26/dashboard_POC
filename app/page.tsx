@@ -28,6 +28,7 @@ export default function FuzzyPIDDashboard() {
   const [trendData, setTrendData] = useState<ProcessData[]>([]);
   const [pastBatches, setPastBatches] = useState<BatchHistory[]>([]);
   const [viewingBatchId, setViewingBatchId] = useState<string>("current");
+  const [dataPointCount, setDataPointCount] = useState<number>(0);
 
   const [alarms, setAlarms] = useState<AlarmLog[]>([
     { id: "1", time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: "Dashboard siap. Klik START DISPLAY untuk mulai merekam data real-time dari sistem yang sedang berjalan." } as AlarmLog,
@@ -65,8 +66,8 @@ export default function FuzzyPIDDashboard() {
     // Initial fetch
     fetchData();
 
-    // Poll every 2 seconds
-    const interval = setInterval(fetchData, 2000);
+    // Poll every 1 second for real-time updates
+    const interval = setInterval(fetchData, 1000);
 
     return () => clearInterval(interval);
   }, []);
@@ -100,7 +101,7 @@ export default function FuzzyPIDDashboard() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Log_Thermal_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
+    a.download = `Log_Thermal_${viewingBatchId === "current" ? batchId : viewingBatchId}_${dataToExport.length}pts.csv`;
     a.click();
   };
 
@@ -113,7 +114,22 @@ export default function FuzzyPIDDashboard() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Log_Motor_${viewingBatchId === "current" ? batchId : viewingBatchId}.csv`;
+    a.download = `Log_Motor_${viewingBatchId === "current" ? batchId : viewingBatchId}_${dataToExport.length}pts.csv`;
+    a.click();
+  };
+
+  const exportAllDataCSV = () => {
+    const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
+    if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
+    const headers = "Waktu;Suhu(C);Set Point Suhu;PWM Heater;RPM;Set Point RPM;PWM Motor;PH\n";
+    const csvData = dataToExport.map(row => 
+      `${row.time};${row.temperature.toFixed(2).replace('.', ',')};${row.setPointTemp || `${targetTempMin}-${targetTempMax}`};${row.dimmer.toFixed(0)};${row.rpm.toFixed(0)};${row.setPointRpm || targetRpm};${row.motorPower.toFixed(0)};${row.ph.toFixed(2).replace('.', ',')}`
+    ).join("\n");
+    const blob = new Blob([headers + csvData], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Log_Complete_${viewingBatchId === "current" ? batchId : viewingBatchId}_${dataToExport.length}pts.csv`;
     a.click();
   };
 
@@ -152,9 +168,10 @@ export default function FuzzyPIDDashboard() {
               setPointRpm: targetRpm
             };
             
-            // Batasi data trend maksimal 100 titik untuk performa
+            // Store ALL data points for full chart display (no truncation)
             const updatedTrend = [...prevTrend, newDataPoint];
-            return updatedTrend.length > 100 ? updatedTrend.slice(-100) : updatedTrend;
+            setDataPointCount(updatedTrend.length);
+            return updatedTrend;
           });
 
           // Logging periodik
@@ -174,7 +191,7 @@ export default function FuzzyPIDDashboard() {
         }
       }
 
-    }, 1500);
+    }, 1000); // Real-time update every 1 second
 
     return () => clearInterval(interval);
   }, [displayActive, targetTempMin, targetTempMax, targetRpm, realTimeData, apiStatus]);
@@ -242,6 +259,7 @@ export default function FuzzyPIDDashboard() {
             <div>
               <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 transition-colors">Advanced <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-500">HMI Dashboard</span></h2>
               <p className="text-slate-500 dark:text-slate-400 transition-colors">Monitoring Real-time Data dari Sistem Fuzzy Logic & Analog PID (Display Only - Tidak Mengontrol Hardware).</p>
+              {displayActive && <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-1">🔴 LIVE - Recording {dataPointCount} data points</p>}
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 bg-gradient-to-br from-white to-slate-50 dark:from-slate-800/80 dark:to-slate-800/50 p-3 rounded-2xl ring-1 ring-slate-200/80 dark:ring-white/10 shadow-lg shadow-slate-200/50 dark:shadow-none backdrop-blur-sm">
@@ -318,74 +336,130 @@ export default function FuzzyPIDDashboard() {
                 <GradientCard title="PH Aktual" value={metrics.ph.toFixed(2)} unit="pH" icon={<FlaskConical size={24} />} color="from-cyan-400 via-teal-500 to-emerald-600 dark:from-cyan-500 dark:to-emerald-600" alert={metrics.ph < 6.5 || metrics.ph > 8.5} />
               </div>
 
-              {/* GRID GRAFIK (SPLIT) */}
+              {/* GRID GRAFIK (4 GRAFIK TERPISAH) */}
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
                 
-                {/* GRAFIK 1: THERMAL (FUZZY LOGIC) */}
+                {/* GRAFIK 1: SUHU (TEMPERATURE) */}
                 <div className="bg-gradient-to-br from-white via-white to-orange-50/30 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-orange-900/10 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-3xl p-6 shadow-2xl shadow-slate-300/30 dark:shadow-orange-500/5 hover:shadow-orange-200/40 dark:hover:shadow-orange-500/10 transition-all duration-500">
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
                       <div className="p-2 bg-gradient-to-br from-orange-400 to-red-500 rounded-lg shadow-lg shadow-orange-500/30">
                         <Thermometer size={18} className="text-white" />
                       </div>
-                      Thermal Control (Fuzzy Logic)
+                      Suhu (Temperature)
                     </h3>
+                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{dataPointCount} data points</span>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Monitoring intervensi AC Dimmer menjaga suhu di dalam kotak target.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Monitoring suhu aktual dengan Fuzzy Logic Control.</p>
                   <div className="h-[280px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={trendData} margin={{ bottom: 20 }}>
+                      <ComposedChart data={trendData} margin={{ bottom: 20, left: 5, right: 5 }}>
                         <defs>
                           <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.4} /><stop offset="95%" stopColor="#f97316" stopOpacity={0} /></linearGradient>
-                          <linearGradient id="colorDimmer" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} /><stop offset="95%" stopColor="#ef4444" stopOpacity={0} /></linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} opacity={0.5} />
-                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis yAxisId="left" stroke="#f97316" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[25, 50]} />
-                        <YAxis yAxisId="right" orientation="right" stroke="#ef4444" fontSize={10} tickLine={false} axisLine={false} dx={10} domain={[0, 100]} />
+                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} interval="preserveStartEnd" minTickGap={50} />
+                        <YAxis stroke="#f97316" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[25, 50]} />
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
                         <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
                         
-                        <ReferenceArea yAxisId="left" y1={targetTempMin} y2={targetTempMax} fill="#f97316" fillOpacity={0.15} />
-                        <ReferenceLine yAxisId="left" y={targetTempMax} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "MAX", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
-                        <ReferenceLine yAxisId="left" y={targetTempMin} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideBottomLeft", value: "MIN", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
+                        <ReferenceArea y1={targetTempMin} y2={targetTempMax} fill="#f97316" fillOpacity={0.15} />
+                        <ReferenceLine y={targetTempMax} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "MAX", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
+                        <ReferenceLine y={targetTempMin} stroke="#ea580c" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideBottomLeft", value: "MIN", fill: "#ea580c", fontSize: 10, fontWeight: "bold" }} />
                         
-                        <Area yAxisId="left" type="monotone" dataKey="temperature" name="Suhu (PV)" stroke="#f97316" strokeWidth={3} fill="url(#colorTemp)" isAnimationActive={false} />
-                        <Area yAxisId="right" type="monotone" dataKey="dimmer" name="PWM Heater" stroke="#ef4444" strokeWidth={2} fill="url(#colorDimmer)" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="temperature" name="Suhu (°C)" stroke="#f97316" strokeWidth={3} fill="url(#colorTemp)" isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
-                {/* GRAFIK 2: MOTOR (ANALOG PID) */}
+                {/* GRAFIK 2: PWM HEATER */}
+                <div className="bg-gradient-to-br from-white via-white to-amber-50/30 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-amber-900/10 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-3xl p-6 shadow-2xl shadow-slate-300/30 dark:shadow-amber-500/5 hover:shadow-amber-200/40 dark:hover:shadow-amber-500/10 transition-all duration-500">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                      <div className="p-2 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg shadow-lg shadow-amber-500/30">
+                        <Zap size={18} className="text-white" />
+                      </div>
+                      PWM Heater
+                    </h3>
+                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{dataPointCount} data points</span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Output kontrol AC Dimmer untuk heater.</p>
+                  <div className="h-[280px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={trendData} margin={{ bottom: 20, left: 5, right: 5 }}>
+                        <defs>
+                          <linearGradient id="colorDimmer" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} /><stop offset="95%" stopColor="#f59e0b" stopOpacity={0} /></linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} opacity={0.5} />
+                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} interval="preserveStartEnd" minTickGap={50} />
+                        <YAxis stroke="#f59e0b" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 100]} />
+                        <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
+                        <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
+                        
+                        <Area type="monotone" dataKey="dimmer" name="PWM Heater (%)" stroke="#f59e0b" strokeWidth={3} fill="url(#colorDimmer)" isAnimationActive={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* GRAFIK 3: RPM MOTOR */}
                 <div className="bg-gradient-to-br from-white via-white to-purple-50/30 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-purple-900/10 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-3xl p-6 shadow-2xl shadow-slate-300/30 dark:shadow-purple-500/5 hover:shadow-purple-200/40 dark:hover:shadow-purple-500/10 transition-all duration-500">
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
                       <div className="p-2 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg shadow-lg shadow-purple-500/30">
                         <Gauge size={18} className="text-white" />
                       </div>
-                      Motor Speed (Analog PID)
+                      RPM Motor
                     </h3>
+                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{dataPointCount} data points</span>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Kurva osilasi (Damped Sine Wave) menuju zona rata-rata RPM.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Kecepatan motor dengan Analog PID Control.</p>
                   <div className="h-[280px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={trendData} margin={{ bottom: 20 }}>
+                      <ComposedChart data={trendData} margin={{ bottom: 20, left: 5, right: 5 }}>
                         <defs>
                           <linearGradient id="colorRpm" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a855f7" stopOpacity={0.4} /><stop offset="95%" stopColor="#a855f7" stopOpacity={0} /></linearGradient>
-                          <linearGradient id="colorMotorPower" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} /><stop offset="95%" stopColor="#6366f1" stopOpacity={0} /></linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} opacity={0.5} />
-                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis yAxisId="left" stroke="#a855f7" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 'dataMax + 50']} />
-                        <YAxis yAxisId="right" orientation="right" stroke="#6366f1" fontSize={10} tickLine={false} axisLine={false} dx={10} domain={[0, 100]} />
+                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} interval="preserveStartEnd" minTickGap={50} />
+                        <YAxis stroke="#a855f7" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 'dataMax + 50']} />
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
                         <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
                         
-                        <ReferenceLine yAxisId="left" y={targetRpm} stroke="#9333ea" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "SETPOINT", fill: "#9333ea", fontSize: 10, fontWeight: "bold" }} />
+                        <ReferenceLine y={targetRpm} stroke="#9333ea" strokeWidth={2} strokeDasharray="4 4" opacity={1} label={{ position: "insideTopLeft", value: "SETPOINT", fill: "#9333ea", fontSize: 10, fontWeight: "bold" }} />
                         
-                        <Line yAxisId="left" type="monotone" dataKey="rpm" name="RPM (PV)" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} isAnimationActive={false} />
-                        <Area yAxisId="right" type="monotone" dataKey="motorPower" name="PWM Motor" stroke="#6366f1" strokeWidth={2} fill="url(#colorMotorPower)" isAnimationActive={false} />
+                        <Line type="monotone" dataKey="rpm" name="RPM" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} isAnimationActive={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* GRAFIK 4: PWM MOTOR */}
+                <div className="bg-gradient-to-br from-white via-white to-indigo-50/30 dark:from-slate-900/80 dark:via-slate-900/60 dark:to-indigo-900/10 backdrop-blur-xl border border-slate-200/80 dark:border-white/10 rounded-3xl p-6 shadow-2xl shadow-slate-300/30 dark:shadow-indigo-500/5 hover:shadow-indigo-200/40 dark:hover:shadow-indigo-500/10 transition-all duration-500">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                      <div className="p-2 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg shadow-lg shadow-indigo-500/30">
+                        <Zap size={18} className="text-white" />
+                      </div>
+                      PWM Motor
+                    </h3>
+                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{dataPointCount} data points</span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Output kontrol PWM untuk motor driver.</p>
+                  <div className="h-[280px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={trendData} margin={{ bottom: 20, left: 5, right: 5 }}>
+                        <defs>
+                          <linearGradient id="colorMotorPower" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} /><stop offset="95%" stopColor="#6366f1" stopOpacity={0} /></linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} opacity={0.5} />
+                        <XAxis dataKey="time" stroke={chartColors.axis} fontSize={10} tickLine={false} axisLine={false} dy={10} interval="preserveStartEnd" minTickGap={50} />
+                        <YAxis stroke="#6366f1" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[0, 100]} />
+                        <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, backdropFilter: "blur(10px)", border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: "12px", color: chartColors.tooltipText, fontSize: "12px" }} />
+                        <Legend verticalAlign="bottom" height={20} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
+                        
+                        <Area type="monotone" dataKey="motorPower" name="PWM Motor (%)" stroke="#6366f1" strokeWidth={3} fill="url(#colorMotorPower)" isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
