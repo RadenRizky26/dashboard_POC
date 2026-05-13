@@ -2,10 +2,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Clock, Zap, Thermometer, ShieldAlert, Sun, Moon, Download, AlertOctagon, SlidersHorizontal, ClipboardList, TableProperties, Power, Droplets, Leaf } from "lucide-react";
+import { Clock, Zap, Thermometer, ShieldAlert, Sun, Moon, Download, AlertOctagon, SlidersHorizontal, ClipboardList, TableProperties, Power, Droplets, Leaf, ThermometerSun } from "lucide-react";
 
 // --- Types ---
-interface ProcessData { time: string; roomTemp: number; targetTemp: number; heaterTemp: number; humidity: number; elapsedMins: number; }
+interface ProcessData { time: string; roomTemp: number; targetTemp: number; heaterTemp: number; humidity: number; ambientTemp: number; ambientHumidity: number; elapsedMins: number; }
 interface AlarmLog { id: string; time: string; type: "WARNING" | "INFO" | "CRITICAL" | "SUCCESS"; message: string; }
 interface BatchHistory { id: string; data: ProcessData[]; }
 
@@ -19,10 +19,9 @@ export default function CascaraOvenDashboard() {
   const [processState, setProcessState] = useState<ProcessState>("IDLE");
   const [isEStop, setIsEStop] = useState(false);
   
-  // Setpoints Oven Cascara Baru (Berdasarkan Target Kelembaban & Fail-safe Jam)
-  const [targetTempMax, setTargetTempMax] = useState<number>(55); // Ideal 50-60 C
-  const [targetHumidity, setTargetHumidity] = useState<number>(8); // Standar SNI
-  const [targetHours, setTargetHours] = useState<number>(5); // Fail-safe time
+  // Setpoints Oven Cascara (Murni Waktu & Suhu)
+  const [targetTempMax, setTargetTempMax] = useState<number>(55); 
+  const [targetHours, setTargetHours] = useState<number>(5); 
   
   const [estimatedEndTime, setEstimatedEndTime] = useState<Date | null>(null);
   
@@ -40,6 +39,8 @@ export default function CascaraOvenDashboard() {
     heaterTemp: 28.5, 
     targetTemp: 28.5,
     humidity: 65, 
+    ambientTemp: 27.2,
+    ambientHumidity: 75,
     elapsedMins: 0 
   });
 
@@ -69,7 +70,7 @@ export default function CascaraOvenDashboard() {
       const endTime = new Date(Date.now() + targetHours * 60 * 60 * 1000);
       setEstimatedEndTime(endTime);
 
-      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Sistem Aktif. Mengejar kelembaban ${targetHumidity}% dengan estimasi fail-safe ${targetHours} Jam.` } as AlarmLog, ...prev].slice(0, 50));
+      setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Sistem Aktif. Memulai pengeringan berdurasi ${targetHours} Jam.` } as AlarmLog, ...prev].slice(0, 50));
     } else {
       setProcessState("IDLE");
       setEstimatedEndTime(null);
@@ -85,15 +86,15 @@ export default function CascaraOvenDashboard() {
     setViewingBatchId("current"); 
     setProcessState("IDLE");
     setEstimatedEndTime(null);
-    setMetrics({ roomTemp: 28.5, heaterTemp: 28.5, targetTemp: 28.5, humidity: 65, elapsedMins: 0 });
+    setMetrics({ roomTemp: 28.5, heaterTemp: 28.5, targetTemp: 28.5, humidity: 65, ambientTemp: 27.2, ambientHumidity: 75, elapsedMins: 0 });
     setAlarms(prev => [{ id: Date.now().toString(), time: new Date().toLocaleTimeString('id-ID'), type: "INFO", message: `Batch baru dimulai: ${newId}.` } as AlarmLog, ...prev].slice(0, 50));
   };
 
   const exportToCSV = () => {
     const dataToExport = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
     if (dataToExport.length === 0) return alert("Tidak ada data untuk di-export.");
-    const headers = "Waktu;Suhu Ruang(C);Suhu Target(C);Suhu Pemanas(C);Kelembaban(%);Menit Berjalan\n";
-    const csvData = dataToExport.map(row => `${row.time};${row.roomTemp.toFixed(1)};${row.targetTemp.toFixed(1)};${row.heaterTemp.toFixed(1)};${row.humidity.toFixed(1)};${row.elapsedMins.toFixed(0)}`).join("\n");
+    const headers = "Waktu;Suhu Ruang(C);Suhu Target(C);Suhu Pemanas(C);Kelembaban Oven(%);Suhu Luar(C);Kelembaban Luar(%);Menit Berjalan\n";
+    const csvData = dataToExport.map(row => `${row.time};${row.roomTemp.toFixed(1)};${row.targetTemp.toFixed(1)};${row.heaterTemp.toFixed(1)};${row.humidity.toFixed(1)};${row.ambientTemp.toFixed(1)};${row.ambientHumidity.toFixed(1)};${row.elapsedMins.toFixed(0)}`).join("\n");
     const blob = new Blob([headers + csvData], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -103,20 +104,24 @@ export default function CascaraOvenDashboard() {
   };
 
   // ==========================================
-  // SIMULASI UTAMA (KELEMBABAN SEBAGAI TRIGGER)
+  // SIMULASI UTAMA (WAKTU SEBAGAI TRIGGER)
   // ==========================================
   useEffect(() => {
     const interval = setInterval(() => {
       setMetrics(prev => {
-        let { roomTemp, heaterTemp, humidity, elapsedMins, targetTemp } = prev;
+        let { roomTemp, heaterTemp, humidity, ambientTemp, ambientHumidity, elapsedMins, targetTemp } = prev;
         const nowStr = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         const totalTargetMins = targetHours * 60;
 
+        // Simulasi fluktuasi cuaca luar (Suhu & Kelembaban Lingkungan)
+        ambientTemp = 26 + Math.sin(Date.now() / 20000) * 3 + (Math.random() * 0.2);
+        ambientHumidity = 78 + Math.cos(Date.now() / 25000) * 5 + (Math.random() * 1);
+
         if (isEStop) {
-          heaterTemp = Math.max(28.5, heaterTemp - 5);
-          roomTemp = Math.max(28.5, roomTemp - 1);
-          humidity = Math.min(65, humidity + 0.5);
-          targetTemp = 28.5;
+          heaterTemp = Math.max(ambientTemp, heaterTemp - 5);
+          roomTemp = Math.max(ambientTemp, roomTemp - 1);
+          humidity = Math.min(ambientHumidity, humidity + 0.5);
+          targetTemp = ambientTemp;
         } 
         else if (processState === "RUNNING") {
           elapsedMins += 2.5; // Percepatan simulasi
@@ -131,51 +136,45 @@ export default function CascaraOvenDashboard() {
           }
 
           if (roomTemp < targetTemp - 0.5) heaterTemp = Math.min(targetTemp + 20, heaterTemp + (Math.random() * 4 + 2)); 
-          else if (roomTemp > targetTemp + 0.5) heaterTemp = Math.max(28.5, heaterTemp - 3); 
+          else if (roomTemp > targetTemp + 0.5) heaterTemp = Math.max(ambientTemp, heaterTemp - 3); 
           else heaterTemp = targetTemp + (Math.random() * 2); 
 
           const heatTransfer = (heaterTemp - roomTemp) * 0.15;
           roomTemp += heatTransfer + (Math.random() * 0.2 - 0.1);
 
-          // Simulasi Kelembaban Menurun secara eksponensial lambat
-          const dryingFactor = (roomTemp - 28) * 0.015;
-          humidity = Math.max(targetHumidity - 1, humidity - dryingFactor - (Math.random() * 0.1));
+          // Kelembaban oven menurun karena suhu panas
+          const dryingFactor = (roomTemp - ambientTemp) * 0.015;
+          humidity = Math.max(5, humidity - dryingFactor - (Math.random() * 0.1));
 
-          // KONDISI BERHENTI (STOP CONDITIONS)
-          if (humidity <= targetHumidity) {
-            elapsedMins = elapsedMins; // Kunci waktu berhenti
-            setProcessState("COMPLETED");
-            setEstimatedEndTime(null);
-            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: `SELESAI! Kadar air ${targetHumidity}% tercapai lebih awal.` } as AlarmLog, ...a].slice(0, 50));
-          } else if (elapsedMins >= totalTargetMins) {
+          // KONDISI BERHENTI (Murni Berdasarkan Durasi Waktu)
+          if (elapsedMins >= totalTargetMins) {
             elapsedMins = totalTargetMins;
             setProcessState("COMPLETED");
             setEstimatedEndTime(null);
-            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: `SELESAI! Batas fail-safe ${targetHours} Jam telah habis.` } as AlarmLog, ...a].slice(0, 50));
+            setAlarms(a => [{ id: Date.now().toString(), time: nowStr, type: "SUCCESS", message: `SELESAI! Waktu pengeringan ${targetHours} Jam telah terpenuhi.` } as AlarmLog, ...a].slice(0, 50));
           }
         } 
         else {
-          heaterTemp = Math.max(28.5, heaterTemp - 2);
-          roomTemp = Math.max(28.5, roomTemp - 0.5);
-          targetTemp = 28.5;
+          heaterTemp = Math.max(ambientTemp, heaterTemp - 2);
+          roomTemp = Math.max(ambientTemp, roomTemp - 0.5);
+          targetTemp = ambientTemp;
+          humidity = Math.min(ambientHumidity, humidity + 0.5);
         }
 
         const newMetrics = { 
           roomTemp: +(roomTemp.toFixed(2)), 
           heaterTemp: +(heaterTemp.toFixed(1)), 
-          targetTemp,
+          targetTemp: +(targetTemp.toFixed(1)),
           humidity: +(humidity.toFixed(1)), 
+          ambientTemp: +(ambientTemp.toFixed(1)),
+          ambientHumidity: +(ambientHumidity.toFixed(1)),
           elapsedMins 
         };
 
-        if (processState === "RUNNING" || roomTemp > 30) {
+        if (processState === "RUNNING" || roomTemp > ambientTemp + 2) {
           setTrendData(prevTrend => [...prevTrend, { 
             time: nowStr.slice(0, 5), 
-            roomTemp: newMetrics.roomTemp, 
-            targetTemp: newMetrics.targetTemp,
-            heaterTemp: newMetrics.heaterTemp,
-            humidity: newMetrics.humidity,
-            elapsedMins: newMetrics.elapsedMins 
+            ...newMetrics
           }]);
         }
 
@@ -184,7 +183,7 @@ export default function CascaraOvenDashboard() {
     }, 1500); 
 
     return () => clearInterval(interval);
-  }, [processState, isEStop, targetTempMax, targetHumidity, targetHours]);
+  }, [processState, isEStop, targetTempMax, targetHours]);
 
   if (!isClient) return null;
 
@@ -195,10 +194,12 @@ export default function CascaraOvenDashboard() {
 
   const displayTableData = viewingBatchId === "current" ? trendData : pastBatches.find(b => b.id === viewingBatchId)?.data || [];
 
+  // Visualisasi Kulit sekarang diprediksi dari PERSENTASE WAKTU (karena tidak ada target lembab spesifik)
   const getSkinStatus = () => {
-    if (metrics.humidity > 45) return { img: "/skin_wet.svg", text: "Masih Basah", color: "text-blue-500", desc: "Kadar air masih tinggi." };
-    if (metrics.humidity > targetHumidity + 15) return { img: "/skin_medium.svg", text: "Setengah Kering", color: "text-amber-500", desc: "Teh mulai layu dan menciut." };
-    return { img: "/skin_dry.svg", text: "Kering", color: "text-orange-800", desc: "Sudah Kering! Siap dikemas." };
+    const progress = (metrics.elapsedMins / (targetHours * 60)) * 100;
+    if (processState === "COMPLETED" || progress >= 95) return { img: "/skin_dry.svg", text: "Kering", color: "text-orange-800", desc: "Pengeringan selesai! Siap dikemas." };
+    if (progress > 40) return { img: "/skin_medium.svg", text: "Setengah Kering", color: "text-amber-500", desc: "Teh mulai layu dan menciut." };
+    return { img: "/skin_wet.svg", text: "Masih Basah", color: "text-blue-500", desc: "Proses pengeringan baru dimulai." };
   };
   const skinStatus = getSkinStatus();
 
@@ -240,7 +241,7 @@ export default function CascaraOvenDashboard() {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-6 border-b border-slate-200 dark:border-white/10 pb-6">
             <div>
               <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 transition-colors">Monitoring <span className="text-orange-500">Pengeringan Teh</span></h2>
-              <p className="text-slate-500 dark:text-slate-400 transition-colors">Dashboard kontrol cerdas berbasis target kelembaban & batas waktu maksimal.</p>
+              <p className="text-slate-500 dark:text-slate-400 transition-colors">Dashboard kontrol cerdas berbasis target durasi waktu & profil suhu bertahap.</p>
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/50 p-2 rounded-xl ring-1 ring-slate-200 dark:ring-white/5">
@@ -264,8 +265,8 @@ export default function CascaraOvenDashboard() {
               <h3 className="font-bold text-blue-700 dark:text-blue-400">Pemandu Sistem:</h3>
               <p className="text-blue-600 dark:text-blue-300 text-sm">
                 {processState === "IDLE" ? "Mesin dalam keadaan mati. Silakan atur parameter, lalu tekan START." : 
-                 processState === "RUNNING" ? `Mesin sedang bekerja mengejar target kering ${targetHumidity}%. Batas waktu otomatis mati pada jam ${estimatedEndTime ? estimatedEndTime.toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}) : '--:--'} WIB.` :
-                 "Proses pengeringan sudah selesai! Silakan buka mesin dan angkat teh cascara."}
+                 processState === "RUNNING" ? `Mesin sedang bekerja mengejar target waktu ${targetHours} Jam. Estimasi mesin otomatis mati pada jam ${estimatedEndTime ? estimatedEndTime.toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}) : '--:--'} WIB.` :
+                 "Proses pengeringan sudah selesai berdasarkan timer! Silakan buka mesin dan angkat teh cascara."}
               </p>
             </div>
           </div>
@@ -283,23 +284,15 @@ export default function CascaraOvenDashboard() {
                 <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 flex-1">
                   <Thermometer size={20} className="text-orange-500" />
                   <div className="flex flex-col w-full">
-                    <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Batas Suhu (°C)</span>
+                    <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Batas Suhu Oven (°C)</span>
                     <input type="number" value={targetTempMax} onChange={(e) => setTargetTempMax(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-24 mt-1 bg-transparent border-b border-slate-300 dark:border-slate-600 outline-none text-xl font-bold text-slate-800 dark:text-white disabled:opacity-50" />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 flex-1">
-                  <Droplets size={20} className="text-blue-500" />
-                  <div className="flex flex-col w-full">
-                    <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Target Lembab (%)</span>
-                    <input type="number" value={targetHumidity} onChange={(e) => setTargetHumidity(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-24 mt-1 bg-transparent border-b border-slate-300 dark:border-slate-600 outline-none text-xl font-bold text-slate-800 dark:text-white disabled:opacity-50" />
                   </div>
                 </div>
 
                 <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 p-3 pl-4 pr-5 rounded-2xl ring-1 ring-slate-200 dark:ring-white/5 flex-1">
                   <Clock size={20} className="text-purple-500" />
                   <div className="flex flex-col w-full">
-                    <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Fail-safe (Jam)</span>
+                    <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Durasi Timer (Jam)</span>
                     <input type="number" value={targetHours} onChange={(e) => setTargetHours(Number(e.target.value))} disabled={processState === "RUNNING"} className="w-24 mt-1 bg-transparent border-b border-slate-300 dark:border-slate-600 outline-none text-xl font-bold text-slate-800 dark:text-white disabled:opacity-50" />
                   </div>
                 </div>
@@ -316,11 +309,18 @@ export default function CascaraOvenDashboard() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              {/* GRID 1: Data Mesin Oven */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <GradientCard title="Suhu Ruang Oven" value={metrics.roomTemp.toFixed(1)} unit="°C" icon={<Thermometer size={24} />} color="from-orange-400 to-red-500" statusColor={getTrafficLight(metrics.roomTemp, true)} />
                 <GradientCard title="Suhu Pemanas" value={metrics.heaterTemp.toFixed(1)} unit="°C" icon={<Zap size={24} />} color="from-yellow-400 to-amber-600" statusColor={getTrafficLight(metrics.heaterTemp, false)} />
-                <GradientCard title="Kelembapan Ruang Oven" value={metrics.humidity.toFixed(1)} unit="%" icon={<Droplets size={24} />} color="from-blue-400 to-cyan-500" alert={metrics.humidity <= targetHumidity && processState === "COMPLETED"} />
-                <GradientCard title="Waktu Berjalan" value={formattedTimer} unit="" icon={<Clock size={24} />} color="from-purple-500 to-indigo-500" isTimer={true} />
+                <GradientCard title="Kelembaban Ruang Udara Oven" value={metrics.humidity.toFixed(1)} unit="%" icon={<Droplets size={24} />} color="from-blue-400 to-cyan-500" />
+              </div>
+
+              {/* GRID 2: Data Lingkungan & Waktu */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <GradientCard title="Waktu Berjalan" value={formattedTimer} unit={`/ ${targetHours} Jam`} icon={<Clock size={24} />} color="from-purple-500 to-indigo-500" isTimer={true} alert={processState === "COMPLETED"} />
+                <GradientCard title="Suhu Luar (Lingkungan)" value={metrics.ambientTemp.toFixed(1)} unit="°C" icon={<ThermometerSun size={24} />} color="from-slate-400 to-slate-500" />
+                <GradientCard title="Kelembaban Luar (Lingkungan)" value={metrics.ambientHumidity.toFixed(1)} unit="%" icon={<Droplets size={24} />} color="from-slate-400 to-slate-500" />
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
@@ -335,14 +335,15 @@ export default function CascaraOvenDashboard() {
                         <YAxis stroke="#f97316" fontSize={10} tickLine={false} axisLine={false} dx={-10} domain={[20, 'dataMax + 10']} />
                         <Tooltip contentStyle={{ backgroundColor: chartColors.tooltipBg, borderRadius: "12px", border: "none", color: chartColors.tooltipText }} />
                         <Line type="stepAfter" dataKey="targetTemp" name="Target Suhu (°C)" stroke="#eab308" strokeWidth={3} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
-                        <Area type="monotone" dataKey="roomTemp" name="Suhu Ruang (°C)" stroke="#f97316" strokeWidth={3} fill="#f97316" fillOpacity={0.1} isAnimationActive={false} />
+                        <Area type="monotone" dataKey="roomTemp" name="Suhu Ruang Oven (°C)" stroke="#f97316" strokeWidth={3} fill="#f97316" fillOpacity={0.1} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="ambientTemp" name="Suhu Luar (°C)" stroke="#64748b" strokeWidth={2} dot={false} isAnimationActive={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
                 <div className="bg-white dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-white/5 rounded-3xl p-6 shadow-sm flex flex-col items-center justify-center text-center">
-                  <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-6">Status Kulit Cascara</h3>
+                  <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-6">Estimasi Kulit Cascara</h3>
                   <div className="relative w-40 h-40 mb-6 bg-slate-50 dark:bg-slate-800/50 rounded-full flex items-center justify-center ring-4 ring-slate-100 dark:ring-slate-800">
                     <Image src={skinStatus.img} alt="Kondisi Teh" width={100} height={100} className="object-contain drop-shadow-xl" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                     <span className="absolute -bottom-2 bg-white dark:bg-slate-800 px-3 py-1 rounded-full text-xs font-bold text-slate-500 border border-slate-200 dark:border-slate-700">Visualisasi</span>
@@ -369,7 +370,9 @@ export default function CascaraOvenDashboard() {
                       <tr className="border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">
                         <th className="p-4 font-semibold">Waktu</th>
                         <th className="p-4 font-semibold">Suhu Ruang</th>
-                        <th className="p-4 font-semibold">Kadar Air</th>
+                        <th className="p-4 font-semibold">Lembab Oven</th>
+                        <th className="p-4 font-semibold border-l border-slate-200 dark:border-slate-700">Suhu Luar</th>
+                        <th className="p-4 font-semibold">Lembab Luar</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -378,6 +381,8 @@ export default function CascaraOvenDashboard() {
                           <td className="p-4 font-mono">{row.time}</td>
                           <td className="p-4">{row.roomTemp.toFixed(1)} °C</td>
                           <td className="p-4 text-blue-500">{row.humidity.toFixed(1)} %</td>
+                          <td className="p-4 border-l border-slate-100 dark:border-slate-800 text-slate-400">{row.ambientTemp.toFixed(1)} °C</td>
+                          <td className="p-4 text-slate-400">{row.ambientHumidity.toFixed(1)} %</td>
                         </tr>
                       ))}
                     </tbody>
