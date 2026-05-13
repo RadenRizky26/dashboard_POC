@@ -20,8 +20,8 @@ export default function FuzzyPIDDashboard() {
   const [isOnline, setIsOnline] = useState(true);
   const [apiStatus, setApiStatus] = useState<"connected" | "disconnected" | "error">("disconnected");
   
-  const [targetTempMin, setTargetTempMin] = useState<number>(38);
-  const [targetTempMax, setTargetTempMax] = useState<number>(42);
+  const [targetTempMin, setTargetTempMin] = useState<number>(35);
+  const [targetTempMax, setTargetTempMax] = useState<number>(40);
   const [targetRpm, setTargetRpm] = useState<number>(120); 
 
   const [batchId, setBatchId] = useState<string>("PRD-Kopi-01");
