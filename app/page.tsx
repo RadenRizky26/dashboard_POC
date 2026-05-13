@@ -66,8 +66,8 @@ export default function FuzzyPIDDashboard() {
     // Initial fetch
     fetchData();
 
-    // Poll every 1 second for real-time updates
-    const interval = setInterval(fetchData, 1000);
+    // Poll every 5 seconds for real-time updates
+    const interval = setInterval(fetchData, 5000);
 
     return () => clearInterval(interval);
   }, []);
@@ -191,7 +191,7 @@ export default function FuzzyPIDDashboard() {
         }
       }
 
-    }, 1000); // Real-time update every 1 second
+    }, 5000); // Real-time update every 5 seconds
 
     return () => clearInterval(interval);
   }, [displayActive, targetTempMin, targetTempMax, targetRpm, realTimeData, apiStatus]);

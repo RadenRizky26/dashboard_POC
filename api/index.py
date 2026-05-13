@@ -37,9 +37,9 @@ def initialize_firebase():
         })
 
 def fetch_firebase_data():
-    """Background thread untuk mengambil data dari Firebase setiap 1 detik"""
+    """Background thread untuk mengambil data dari Firebase setiap 5 detik"""
     global cached_data
-    print("🔄 Background thread started - fetching data every 1 second")
+    print("🔄 Background thread started - fetching data every 5 seconds")
     
     while True:
         try:
@@ -77,18 +77,18 @@ def fetch_firebase_data():
                 cached_data["status"] = "error"
             print(f"❌ Error fetching data: {str(e)}")
         
-        # Tunggu 1 detik sebelum fetch berikutnya
-        time.sleep(1.0)
+        # Tunggu 5 detik sebelum fetch berikutnya
+        time.sleep(5.0)
 
 initialize_firebase()
 
-# Start background thread untuk fetch data setiap 1 detik
+# Start background thread untuk fetch data setiap 5 detik
 data_thread = threading.Thread(target=fetch_firebase_data, daemon=True)
 data_thread.start()
 
 @app.route('/api/index', methods=['GET'])
 def get_data():
-    """Endpoint API yang mengembalikan data dari cache (diupdate setiap 1 detik)"""
+    """Endpoint API yang mengembalikan data dari cache (diupdate setiap 5 detik)"""
     try:
         with cache_lock:
             data_copy = cached_data.copy()
