@@ -216,7 +216,7 @@ export default function FuzzyPIDDashboard() {
             </div>
             <div>
               <h1 className="font-extrabold text-xl text-transparent bg-clip-text bg-gradient-to-r from-slate-800 via-slate-700 to-slate-600 dark:from-white dark:via-slate-200 dark:to-slate-400 tracking-tight">
-                DASHBOARD <span className="font-light text-slate-400 dark:text-slate-500">Fuzzy-PID</span>
+                DASHBOARD <span className="font-light text-slate-400 dark:text-slate-500"></span>
               </h1>
               <p className="text-[10px] text-slate-500 dark:text-slate-600 font-medium tracking-wide">Real-time Industrial Control System</p>
             </div>
